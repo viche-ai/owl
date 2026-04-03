@@ -26,7 +26,8 @@ type AgentEngine struct {
 	messages   []llm.Message
 	provider   llm.Provider
 	model      string
-	vicheTools *tools.VicheTools
+	vicheTools  *tools.VicheTools
+	systemTools *tools.SystemTools
 	toolDefs   []llm.ToolDef
 }
 
@@ -262,6 +263,17 @@ Output ONLY valid JSON.`, args.Description)
 		e.appendLog("\n")
 	}
 
+	// ── Step 3b: System tools (shell, file read/write/edit) ──
+	e.systemTools = &tools.SystemTools{WorkDir: home + "/dev/viche-ai/viche"}
+	for _, def := range e.systemTools.Definitions() {
+		e.toolDefs = append(e.toolDefs, llm.ToolDef{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.Parameters,
+		})
+	}
+	e.appendLog(fmt.Sprintf("> %d system tools available: shell_exec, file_read, file_write, file_edit\n", len(e.systemTools.Definitions())))
+
 	// ── Step 4: Setup main system prompt ──
 	systemPrompt := fmt.Sprintf(`You are an AI agent. Your identity: %s
 Your purpose: %s
@@ -425,7 +437,19 @@ func (e *AgentEngine) runWithTools() string {
 				continue
 			}
 
-			result := e.vicheTools.Execute(call)
+			var result string
+			switch call.Name {
+			case "viche_discover", "viche_send", "viche_reply":
+				if e.vicheTools != nil {
+					result = e.vicheTools.Execute(call)
+				} else {
+					result = "Error: Viche tools not available (not connected to network)"
+				}
+			case "shell_exec", "file_read", "file_write", "file_edit":
+				result = e.systemTools.Execute(call)
+			default:
+				result = fmt.Sprintf("Unknown tool: %s", call.Name)
+			}
 
 			// If debug verbosity is enabled, print full result, else print truncated
 			e.logDebug(fmt.Sprintf("> Result: %s\n", result))
