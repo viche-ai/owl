@@ -261,3 +261,26 @@ No agent impact. The TUI is stateless. Agents continue running in the daemon. Th
 | Prompt templates                  | Not supported               | `~/.owl/templates/` with hatch flags   |
 | Sidebar state accuracy            | Basic (hatching/flying/idle)| Granular (thinking animation, auto-wake)|
 | Graceful owld shutdown            | Basic signal + socket cleanup| Full agent cleanup + viche deregister  |
+
+## Known Issue: Agent Ping-Pong Loop
+
+### Problem
+
+When agents notify each other of completed work, the receiving agent interprets the notification as a new task, triggering another cycle. Observed in the implement → review → address pipeline:
+
+1. Addresser finishes → sends "done" to reviewer AND implementer
+2. Reviewer receives → re-reviews → sends new feedback
+3. Addresser receives → re-addresses → sends "done" again
+4. Loop continues indefinitely
+
+### Current Mitigation
+
+Prompt-level: agents are instructed to only perform their task once and stop.
+
+### Proper Fix (TODO)
+
+Needs protocol-level solution:
+- Message types that distinguish "task" from "acknowledgment" (the `type` field exists but agents don't respect it)
+- Agent state machine: after completing a task and reporting, transition to `idle` and ignore follow-up chatter
+- Conversation termination signals: a "done" message type that doesn't trigger re-processing
+- Orchestrator pattern: a coordinator agent that manages the pipeline instead of agents messaging each other freely
