@@ -1,0 +1,125 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/rpc"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/viche-ai/owl/internal/ipc"
+	"github.com/viche-ai/owl/internal/tui"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "owl",
+	Short: "Owl terminal coding tool",
+	Run: func(cmd *cobra.Command, args []string) {
+		tui.Run()
+	},
+}
+
+var (
+	modelFlag    string
+	templateFlag string
+	registryFlag string
+	thinkingFlag bool
+	effortFlag   string
+	nameFlag     string
+)
+
+type Template struct {
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	SystemPrompt string   `json:"system_prompt"`
+	Capabilities []string `json:"capabilities"`
+	Model        string   `json:"model"`
+	Thinking     bool     `json:"thinking"`
+	Effort       string   `json:"effort"`
+}
+
+var hatchCmd = &cobra.Command{
+	Use:   "hatch [description...]",
+	Short: "Hatch a new agent",
+	Run: func(cmd *cobra.Command, args []string) {
+		client, err := rpc.Dial("unix", "/tmp/owld.sock")
+		if err != nil {
+			fmt.Println("Error connecting to owld daemon. Run 'go run ./cmd/owld' in another terminal.")
+			os.Exit(1)
+		}
+		defer client.Close()
+
+		desc := strings.Join(args, " ")
+
+		hatchArgs := ipc.HatchArgs{
+			Description: desc,
+			ModelID:     modelFlag,
+			Template:    templateFlag,
+			Registry:    registryFlag,
+			Thinking:    thinkingFlag,
+			Effort:      effortFlag,
+			Name:        nameFlag,
+		}
+
+		if templateFlag != "" {
+			home, _ := os.UserHomeDir()
+			tmplPath := filepath.Join(home, ".owl", "templates", templateFlag+".json")
+			if b, err := os.ReadFile(tmplPath); err == nil {
+				var tmpl Template
+				if err := json.Unmarshal(b, &tmpl); err == nil {
+					// Merge template defaults if not explicitly provided
+					if hatchArgs.Description == "" {
+						hatchArgs.Description = tmpl.Description
+					} else {
+						hatchArgs.Description = tmpl.SystemPrompt + "\n\nTask: " + hatchArgs.Description
+					}
+					if hatchArgs.ModelID == "" {
+						hatchArgs.ModelID = tmpl.Model
+					}
+					if !cmd.Flags().Changed("thinking") {
+						hatchArgs.Thinking = tmpl.Thinking
+					}
+					if hatchArgs.Effort == "" {
+						hatchArgs.Effort = tmpl.Effort
+					}
+					if hatchArgs.Name == "" {
+						hatchArgs.Name = tmpl.Name
+					}
+				} else {
+					fmt.Println("Warning: Failed to parse template JSON:", err)
+				}
+			} else {
+				fmt.Println("Warning: Template not found at", tmplPath)
+			}
+		}
+
+		if hatchArgs.Description == "" {
+			fmt.Println("Error: description is required")
+			os.Exit(1)
+		}
+
+		var reply ipc.HatchReply
+		err = client.Call("Daemon.Hatch", &hatchArgs, &reply)
+		if err != nil {
+			fmt.Println("RPC error:", err)
+			return
+		}
+		fmt.Println(reply.Message)
+	},
+}
+
+func main() {
+	hatchCmd.Flags().StringVar(&modelFlag, "model", "", "Override the default model")
+	hatchCmd.Flags().StringVar(&templateFlag, "template", "", "Use a prompt template")
+	hatchCmd.Flags().StringVar(&registryFlag, "registry", "", "Override the Viche registry")
+	hatchCmd.Flags().BoolVar(&thinkingFlag, "thinking", false, "Enable extended thinking")
+	hatchCmd.Flags().StringVar(&effortFlag, "effort", "", "Set reasoning effort (low/medium/high)")
+	hatchCmd.Flags().StringVar(&nameFlag, "name", "", "Override the agent's display name")
+
+	rootCmd.AddCommand(hatchCmd)
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}

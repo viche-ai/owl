@@ -1,0 +1,32 @@
+#!/bin/sh
+# Pre-commit hook: runs bd preflight checks before every commit.
+#
+# This hook is version-controlled in .githooks/ and auto-configured
+# via: git config core.hooksPath .githooks
+
+set -e
+
+echo "------------------------------------------------------------"
+echo "  Pre-commit: running bd preflight checks"
+echo "  (format, lint, tests)"
+echo "------------------------------------------------------------"
+
+if ! command -v bd >/dev/null 2>&1; then
+  echo "Warning: bd command not found. Please install beads (https://github.com/steveyegge/beads) to run pre-commit checks." >&2
+  exit 1
+fi
+
+# We run bd preflight check. It handles testing, linting, and formatting.
+if ! bd preflight --check; then
+  echo ""
+  echo "------------------------------------------------------------"
+  echo "  BLOCKED: pre-commit validation failed."
+  echo "  Fix the issues above, then try committing again."
+  echo "------------------------------------------------------------"
+  exit 1
+fi
+
+echo ""
+echo "------------------------------------------------------------"
+echo "  Pre-commit validation passed. Proceeding with commit."
+echo "------------------------------------------------------------"
