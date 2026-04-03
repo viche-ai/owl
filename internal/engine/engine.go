@@ -26,8 +26,11 @@ type AgentEngine struct {
 	messages   []llm.Message
 	provider   llm.Provider
 	model      string
-	vicheTools *tools.VicheTools
-	toolDefs   []llm.ToolDef
+	vicheTools  *tools.VicheTools
+	systemTools *tools.SystemTools
+	taskTools   *tools.TaskTools
+	taskLedger  *TaskLedger
+	toolDefs    []llm.ToolDef
 }
 
 func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
@@ -257,10 +260,33 @@ Output ONLY valid JSON.`, args.Description)
 					Parameters:  def.Parameters,
 				})
 			}
-			e.appendLog(fmt.Sprintf("> %d Viche tools available: viche_discover, viche_send, viche_reply\n", len(e.toolDefs)))
+			e.appendLog(fmt.Sprintf("> %d Viche tools available: viche_discover, viche_send\n", len(e.toolDefs)))
 		}
 		e.appendLog("\n")
 	}
+
+	// ── Step 3b: System tools (shell, file read/write/edit) ──
+	e.systemTools = &tools.SystemTools{WorkDir: home + "/dev/viche-ai/viche"}
+	for _, def := range e.systemTools.Definitions() {
+		e.toolDefs = append(e.toolDefs, llm.ToolDef{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.Parameters,
+		})
+	}
+	e.appendLog(fmt.Sprintf("> %d system tools available: shell_exec, file_read, file_write, file_edit\n", len(e.systemTools.Definitions())))
+
+	// ── Step 3c: Task ledger + tools ──
+	e.taskLedger = NewTaskLedger(fmt.Sprintf("%s-%d", sanitizeName(args.Description), time.Now().Unix()))
+	e.taskTools = &tools.TaskTools{Updater: e}
+	for _, def := range e.taskTools.Definitions() {
+		e.toolDefs = append(e.toolDefs, llm.ToolDef{
+			Name:        def.Name,
+			Description: def.Description,
+			Parameters:  def.Parameters,
+		})
+	}
+	e.appendLog("> Task ledger initialized\n")
 
 	// ── Step 4: Setup main system prompt ──
 	systemPrompt := fmt.Sprintf(`You are an AI agent. Your identity: %s
@@ -271,9 +297,15 @@ You are connected to the Viche agent network.%s
 You have tools to discover and communicate with other agents:
 - viche_discover: Find agents by capability (use '*' for all)
 - viche_send: Send a message to another agent by their ID
-- viche_reply: Reply to an agent that messaged you
 
 When you need to interact with other agents, use these tools. Always use the tools rather than trying to simulate communication.
+
+TASK MANAGEMENT:
+Each inbound message is automatically registered in your task ledger. Before acting on any message:
+1. Check the [TASK LEDGER] section — it shows all your tasks and their status
+2. If a message relates to a task you already COMPLETED, acknowledge briefly but do NOT redo the work
+3. If it is a new task, work on it and use task_update to mark it "started" then "completed" when done
+4. Never repeat completed work, even if asked again
 
 Your initial plan was:
 %s
@@ -293,10 +325,16 @@ Your initial plan was:
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
 
-	e.appendLog("> Hatch complete. Listening for messages...\n")
+	e.appendLog("> Hatch complete.\n")
+	e.setState("flying")
+
+	// ── Step 5: Kickoff — send the original description as the first task ──
+	e.appendLog("> Starting work on task...\n")
+	e.processMessage(args.Description)
 	e.setState("idle")
 
-	// ── Step 5: Conversation loop ──
+	// ── Step 6: Conversation loop ──
+	e.appendLog("> Listening for messages...\n")
 	for msg := range inbox {
 		e.appendLog(fmt.Sprintf("\n> [%s] %s\n", msg.From, msg.Content))
 		e.processMessage(msg.Content)
@@ -310,11 +348,35 @@ Your initial plan was:
 	e.setState("stopped")
 }
 
+// UpdateTaskStatus implements tools.TaskUpdater
+func (e *AgentEngine) UpdateTaskStatus(id string, status string) string {
+	e.taskLedger.UpdateTask(id, TaskStatus(status))
+	return fmt.Sprintf("Task %s updated to %s", id, status)
+}
+
+// ListTasks implements tools.TaskUpdater
+func (e *AgentEngine) ListTasks() string {
+	return e.taskLedger.ContextSummary()
+}
+
 func (e *AgentEngine) processMessage(content string) {
 	e.setState("flying")
 	e.appendLog("\n[Thinking]...\n")
 
-	e.messages = append(e.messages, llm.Message{Role: llm.RoleUser, Content: content})
+	// Register inbound message as a new task
+	source := "user"
+	if strings.HasPrefix(content, "[Message from agent") {
+		parts := strings.SplitN(content, "]", 2)
+		if len(parts) > 0 {
+			source = strings.TrimPrefix(parts[0], "[Message from agent ")
+		}
+	}
+	task := e.taskLedger.AddTask(truncate(content, 200), source)
+
+	// Inject task context into the message
+	taskContext := fmt.Sprintf("[TASK LEDGER]\n%s\n[END TASK LEDGER]\n\n[NEW MESSAGE (task %s)]\n%s", e.taskLedger.ContextSummary(), task.ID, content)
+
+	e.messages = append(e.messages, llm.Message{Role: llm.RoleUser, Content: taskContext})
 
 	response := e.runWithTools()
 	if response != "" {
@@ -419,7 +481,21 @@ func (e *AgentEngine) runWithTools() string {
 				continue
 			}
 
-			result := e.vicheTools.Execute(call)
+			var result string
+			switch call.Name {
+			case "viche_discover", "viche_send":
+				if e.vicheTools != nil {
+					result = e.vicheTools.Execute(call)
+				} else {
+					result = "Error: Viche tools not available (not connected to network)"
+				}
+			case "shell_exec", "file_read", "file_write", "file_edit":
+				result = e.systemTools.Execute(call)
+			case "task_update":
+				result = e.taskTools.Execute(call)
+			default:
+				result = fmt.Sprintf("Unknown tool: %s", call.Name)
+			}
 
 			// If debug verbosity is enabled, print full result, else print truncated
 			e.logDebug(fmt.Sprintf("> Result: %s\n", result))
@@ -484,4 +560,11 @@ func (e *AgentEngine) logDebug(text string) {
 
 func (e *AgentEngine) setState(state string) {
 	e.Mu(func() { e.State.State = state })
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
