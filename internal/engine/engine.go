@@ -293,10 +293,16 @@ Your initial plan was:
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
 
-	e.appendLog("> Hatch complete. Listening for messages...\n")
+	e.appendLog("> Hatch complete.\n")
+	e.setState("flying")
+
+	// ── Step 5: Kickoff — send the original description as the first task ──
+	e.appendLog("> Starting work on task...\n")
+	e.processMessage(args.Description)
 	e.setState("idle")
 
-	// ── Step 5: Conversation loop ──
+	// ── Step 6: Conversation loop ──
+	e.appendLog("> Listening for messages...\n")
 	for msg := range inbox {
 		e.appendLog(fmt.Sprintf("\n> [%s] %s\n", msg.From, msg.Content))
 		e.processMessage(msg.Content)
