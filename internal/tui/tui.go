@@ -1,14 +1,15 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/rpc"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,7 +35,6 @@ var (
 
 // ── Messages ────────────────────────────────────────────────────────────────
 type tickMsg time.Time
-type clearFlashMsg struct{}
 type thinkTickMsg time.Time
 
 func tick() tea.Cmd {
@@ -170,7 +170,6 @@ type model struct {
 	agentInput     textinput.Model
 	consoleHistory []string
 	viewport       viewport.Model
-	copiedFlash    bool
 	thinkDots      int
 	lastLogLen     map[string]int
 }
@@ -357,7 +356,7 @@ func (m *model) refreshViewport() {
 	m.viewport.Width = mainWidth - 4
 	m.viewport.Height = contentHeight
 
-	logs := ag.Logs
+	logs := formatAgentLogs(ag.Logs)
 
 	// Thinking animation: only animate the LAST [Thinking] if it's the trailing content.
 	// All earlier [Thinking] markers become static since they already have responses.
@@ -371,16 +370,25 @@ func (m *model) refreshViewport() {
 		lastIdx := strings.LastIndex(logs, "[Thinking]")
 		before := logs[:lastIdx]
 		after := logs[lastIdx+len("[Thinking]"):]
-		before = strings.ReplaceAll(before, "[Thinking]", staticThink)
+		before = strings.ReplaceAll(before, "[Thinking]...", staticThink)
+		// 'after' contains the rest of the string starting AFTER '[Thinking]'. If it starts with '...', strip it.
+		after = strings.TrimPrefix(after, "...")
 		logs = before + animThink + after
 	} else {
+		logs = strings.ReplaceAll(logs, "[Thinking]...", staticThink)
 		logs = strings.ReplaceAll(logs, "[Thinking]", staticThink)
 	}
 
 	logs = strings.ReplaceAll(logs, "[Error]", lipgloss.NewStyle().Foreground(Red).Background(PaneBg).Render("✗ Error"))
 	logs = strings.ReplaceAll(logs, "[Warning]", lipgloss.NewStyle().Foreground(Yellow).Background(PaneBg).Render("⚠ Warning"))
 
-	m.viewport.SetContent(lipgloss.NewStyle().Foreground(Fg).Background(PaneBg).Width(mainWidth - 4).Render(logs))
+	// Split logs by line and explicitly render each line with the background
+	// so that lipgloss properly reapplies the background after any nested ANSI resets.
+	logLines := strings.Split(logs, "\n")
+	for i, l := range logLines {
+		logLines[i] = lipgloss.NewStyle().Foreground(Fg).Background(PaneBg).Width(mainWidth - 4).Render(l)
+	}
+	m.viewport.SetContent(strings.Join(logLines, "\n"))
 
 	// Auto-scroll to bottom when new content arrives
 	logLen := len(ag.Logs)
@@ -462,20 +470,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sidebarWidth := 40
 			mainWidth := m.width - sidebarWidth
 
-			clipIconX := mainWidth - 5
-			clipIconY := 1
-			if msg.X >= clipIconX-1 && msg.X <= clipIconX+3 && msg.Y >= clipIconY-1 && msg.Y <= clipIconY+1 {
-				var text string
-				if m.activeTab == 0 {
-					text = lastConsoleBlock(m.consoleHistory)
-				} else if m.activeTab-1 < len(m.agents) {
-					text = lastAgentBlock(m.agents[m.activeTab-1].Logs)
-				}
-				_ = clipboard.WriteAll(stripAnsi(text))
-				m.copiedFlash = true
-				return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return clearFlashMsg{} })
-			}
-
 			if msg.X >= mainWidth {
 				offsets := computeTabYOffsets(m.agents)
 				for i, startY := range offsets {
@@ -503,9 +497,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
-
-	case clearFlashMsg:
-		m.copiedFlash = false
 
 	case thinkTickMsg:
 		m.thinkDots = (m.thinkDots + 1) % 3
@@ -560,7 +551,7 @@ func stateStyle(state string) (lipgloss.Color, string) {
 
 func computeTabYOffsets(agents []ipc.AgentState) []int {
 	offsets := make([]int, 0, 1+len(agents))
-	y := 2 // "  OWL NEST" + blank line
+	y := 3 // top padding + "  OWL NEST" + blank line
 
 	// Console tab: 3 content lines + 2 padding = 5
 	offsets = append(offsets, y)
@@ -608,12 +599,6 @@ func (m model) View() string {
 			Render(fmt.Sprintf("Cannot reach owld daemon.\n\n%v\n\nRun: owld", m.daemonErr))
 	}
 
-	// Clipboard icon
-	clipIcon := lipgloss.NewStyle().Foreground(Grey).Background(PaneBg).Render("📋")
-	if m.copiedFlash {
-		clipIcon = lipgloss.NewStyle().Foreground(Green).Bold(true).Background(PaneBg).Render(" ✓ ")
-	}
-
 	var mainContent string
 	var rawInput string
 
@@ -621,8 +606,8 @@ func (m model) View() string {
 		// ── Console Tab ──
 		header := lipgloss.NewStyle().Foreground(Yellow).Bold(true).Background(PaneBg).Render("Console")
 		spacer := lipgloss.NewStyle().Background(PaneBg).Render(
-			strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-lipgloss.Width(clipIcon)-6)))
-		headerLine := header + spacer + clipIcon
+			strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-4)))
+		headerLine := header + spacer
 
 		hist := strings.Join(m.consoleHistory, "\n")
 		lines := strings.Split(hist, "\n")
@@ -641,8 +626,8 @@ func (m model) View() string {
 			stateBadge := lipgloss.NewStyle().Foreground(Grey).Background(PaneBg).Render(fmt.Sprintf(" [%s]", ag.State))
 			header := lipgloss.NewStyle().Foreground(col).Bold(true).Background(PaneBg).Render(fmt.Sprintf("%s %s", icon, ag.Name)) + stateBadge
 			spacer := lipgloss.NewStyle().Background(PaneBg).Render(
-				strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-lipgloss.Width(clipIcon)-6)))
-			headerLine := header + spacer + clipIcon
+				strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-4)))
+			headerLine := header + spacer
 
 			// Viewport content is managed by refreshViewport() in Update()
 			mainContent = headerLine + "\n\n" + m.viewport.View()
@@ -659,8 +644,8 @@ func (m model) View() string {
 		Width(inputInnerWidth).
 		Background(InputBg).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(BorderColor).
-		Padding(0, 1).
+		BorderForeground(BorderColor).BorderBackground(PaneBg).
+		Padding(0, 0, 0, 1).
 		Render(rawInput)
 	inputBar := lipgloss.NewStyle().Background(PaneBg).PaddingLeft(2).Render(inputBox)
 
@@ -694,7 +679,7 @@ func (m model) View() string {
 	// Agent tabs
 	for i, ag := range m.agents {
 		isActive := m.activeTab == i+1
-		col, icon := stateStyle(ag.State)
+		col, _ := stateStyle(ag.State)
 
 		bg := AppBg
 		if isActive {
@@ -706,15 +691,26 @@ func (m model) View() string {
 			nameStyle = nameStyle.Foreground(Green)
 		}
 
+		nameIcon := "○"
+		if ag.State == "hatching" {
+			nameIcon = "🥚"
+		} else if isActive {
+			nameIcon = "●"
+		}
+
 		name := ag.Name
 		if len(name) > 22 {
 			name = name[:19] + "..."
 		}
 
-		line1 := lipgloss.NewStyle().Foreground(col).Background(bg).Render(icon) +
+		line1 := lipgloss.NewStyle().Foreground(col).Background(bg).Render(nameIcon) +
 			lipgloss.NewStyle().Background(bg).Render("  ") +
 			nameStyle.Render(name)
-		line2 := lipgloss.NewStyle().Foreground(Grey).Background(bg).Render(fmt.Sprintf("%-6s %s", ag.Role, ag.Ctx))
+		roleCtx := strings.ReplaceAll(fmt.Sprintf("%-6s %s", ag.Role, ag.Ctx), "\n", " ")
+		if len(roleCtx) > sidebarWidth-6 {
+			roleCtx = roleCtx[:sidebarWidth-9] + "..."
+		}
+		line2 := lipgloss.NewStyle().Foreground(Grey).Background(bg).Render(roleCtx)
 		line3 := lipgloss.NewStyle().Foreground(col).Background(bg).Render("● " + ag.State)
 		content := line1 + "\n" + line2 + "\n" + line3
 
@@ -737,57 +733,12 @@ func (m model) View() string {
 		Width(sidebarWidth).
 		Height(m.height).
 		Background(AppBg).
-		Render(sidebarHeader + "\n\n" + strings.Join(tabs, "\n"))
+		Render("\n" + sidebarHeader + "\n\n" + strings.Join(tabs, "\n"))
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, mainPane, sidebar)
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
-func stripAnsi(s string) string {
-	var result strings.Builder
-	inEscape := false
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') {
-				inEscape = false
-			}
-			continue
-		}
-		result.WriteByte(s[i])
-	}
-	return result.String()
-}
-
-func lastConsoleBlock(history []string) string {
-	lastIdx := -1
-	for i, line := range history {
-		if strings.Contains(stripAnsi(line), "❯ ") {
-			lastIdx = i
-		}
-	}
-	if lastIdx >= 0 && lastIdx < len(history)-1 {
-		return strings.Join(history[lastIdx+1:], "\n")
-	}
-	if len(history) > 0 {
-		return history[len(history)-1]
-	}
-	return ""
-}
-
-func lastAgentBlock(logs string) string {
-	blocks := strings.Split(logs, "\n\n")
-	for i := len(blocks) - 1; i >= 0; i-- {
-		b := strings.TrimSpace(blocks[i])
-		if b != "" {
-			return b
-		}
-	}
-	return logs
-}
 
 func max(a, b int) int {
 	if a > b {
@@ -803,4 +754,192 @@ func Run() {
 		fmt.Printf("Error: %v", err)
 		os.Exit(1)
 	}
+}
+
+// ── Agent Log Formatting ────────────────────────────────────────────────────
+var (
+	jsonKeyRe = regexp.MustCompile(`"([^"]+)"(\s*:)`)
+	jsonStrRe = regexp.MustCompile(`(:\s*)("([^"\\\\]|\\\\.)*")`)
+	jsonNumRe = regexp.MustCompile(`(:\s*)([0-9\.\-]+|true|false|null)`)
+)
+
+func formatAgentLogs(raw string) string {
+	toolRe := regexp.MustCompile(`(?m)^> \[((?:Native )?Tool): ([^\]]+)\]\s*(\{)`)
+
+	var processed strings.Builder
+	lastEnd := 0
+
+	idxs := toolRe.FindAllStringSubmatchIndex(raw, -1)
+	for _, idx := range idxs {
+		startMatch := idx[0]
+		prefixStart := idx[2]
+		prefixEnd := idx[3]
+		nameStart := idx[4]
+		nameEnd := idx[5]
+		startBrace := idx[6]
+
+		isNative := false
+		if prefixStart != -1 && prefixEnd != -1 {
+			isNative = strings.Contains(raw[prefixStart:prefixEnd], "Native")
+		}
+
+		toolName := raw[nameStart:nameEnd]
+
+		openCount := 0
+		endBrace := -1
+		for i := startBrace; i < len(raw); i++ {
+			if raw[i] == '{' {
+				openCount++
+			} else if raw[i] == '}' {
+				openCount--
+				if openCount == 0 {
+					endBrace = i
+					break
+				}
+			}
+		}
+
+		if endBrace != -1 {
+			processed.WriteString(raw[lastEnd:startMatch])
+
+			jsonStr := raw[startBrace : endBrace+1]
+
+			var obj map[string]interface{}
+			prettyJSON := jsonStr
+			if err := json.Unmarshal([]byte(jsonStr), &obj); err == nil {
+				if formatted, err := json.MarshalIndent(obj, "", "  "); err == nil {
+					prettyJSON = string(formatted)
+				}
+			}
+
+			s := prettyJSON
+			s = jsonKeyRe.ReplaceAllString(s, lipgloss.NewStyle().Foreground(Blue).Background(PaneBg).Render("\"$1\"")+"$2")
+			s = jsonStrRe.ReplaceAllStringFunc(s, func(m string) string {
+				parts := jsonStrRe.FindStringSubmatch(m)
+				if len(parts) > 2 {
+					return parts[1] + lipgloss.NewStyle().Foreground(Green).Background(PaneBg).Render(parts[2])
+				}
+				return m
+			})
+			s = jsonNumRe.ReplaceAllStringFunc(s, func(m string) string {
+				parts := jsonNumRe.FindStringSubmatch(m)
+				if len(parts) > 2 {
+					return parts[1] + lipgloss.NewStyle().Foreground(Purple).Background(PaneBg).Render(parts[2])
+				}
+				return m
+			})
+
+			icon := "🔧"
+			if isNative {
+				icon = "⚙️"
+			}
+
+			outcome := "Running"
+			borderColor := Blue
+
+			lookahead := raw[endBrace:]
+			// The engine prints e.g. "> Tool execution completed: Success\n"
+			if idx := strings.Index(lookahead, "> Tool execution completed: "); idx != -1 {
+				// verify it's for this tool call by ensuring no other tool call started before it
+				nextToolIdx := strings.Index(lookahead, "> [Tool: ")
+				if nextToolIdx == -1 || idx < nextToolIdx {
+					nlIdx := strings.Index(lookahead[idx:], "\n")
+					if nlIdx != -1 {
+						statusStr := lookahead[idx+len("> Tool execution completed: ") : idx+nlIdx]
+						if strings.Contains(statusStr, "Failed") {
+							outcome = "Failed"
+							borderColor = Red
+						} else if strings.Contains(statusStr, "Success") {
+							outcome = "Success"
+							borderColor = Green
+						}
+					}
+				}
+			}
+
+			headerLeft := lipgloss.NewStyle().Foreground(Fg).Background(PaneBg).Bold(true).Render(fmt.Sprintf("%s Tool call: %s", icon, toolName))
+			var outcomeStyle lipgloss.Style
+			switch outcome {
+			case "Running":
+				outcomeStyle = lipgloss.NewStyle().Foreground(Blue).Background(PaneBg).Italic(true)
+			case "Success":
+				outcomeStyle = lipgloss.NewStyle().Foreground(Green).Background(PaneBg)
+			default:
+				outcomeStyle = lipgloss.NewStyle().Foreground(Red).Background(PaneBg).Bold(true)
+			}
+
+			headerRight := outcomeStyle.Render(fmt.Sprintf("[%s]", outcome))
+			header := headerLeft + " " + headerRight
+
+			content := header + "\n" + s
+
+			block := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder(), false, false, false, true).
+				BorderForeground(borderColor).
+				BorderBackground(PaneBg).
+				PaddingLeft(1).
+				MarginBottom(1).
+				Background(PaneBg).
+				Render(content)
+
+			processed.WriteString(block + "\n")
+			lastEnd = endBrace + 1
+		}
+	}
+	processed.WriteString(raw[lastEnd:])
+
+	rawLines := processed.String()
+	lines := strings.Split(rawLines, "\n")
+	var out []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "> Tool execution completed:") {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+			var obj map[string]interface{}
+			if err := json.Unmarshal([]byte(trimmed), &obj); err == nil {
+				formatted, err := json.MarshalIndent(obj, "", "  ")
+				if err == nil {
+					s := string(formatted)
+					s = jsonKeyRe.ReplaceAllString(s, lipgloss.NewStyle().Foreground(Blue).Background(PaneBg).Render("\"$1\"")+"$2")
+					s = jsonStrRe.ReplaceAllStringFunc(s, func(m string) string {
+						parts := jsonStrRe.FindStringSubmatch(m)
+						if len(parts) > 2 {
+							return parts[1] + lipgloss.NewStyle().Foreground(Green).Background(PaneBg).Render(parts[2])
+						}
+						return m
+					})
+					s = jsonNumRe.ReplaceAllStringFunc(s, func(m string) string {
+						parts := jsonNumRe.FindStringSubmatch(m)
+						if len(parts) > 2 {
+							return parts[1] + lipgloss.NewStyle().Foreground(Purple).Background(PaneBg).Render(parts[2])
+						}
+						return m
+					})
+
+					block := lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(BorderColor).BorderBackground(PaneBg).PaddingLeft(1).MarginBottom(1).Background(PaneBg).Render(s)
+					out = append(out, block)
+					continue
+				}
+			}
+		}
+
+		if strings.HasPrefix(trimmed, "=>") || strings.HasPrefix(trimmed, "> ") {
+			if !strings.HasPrefix(trimmed, "\x1b[") {
+				line = lipgloss.NewStyle().Foreground(Grey).Background(PaneBg).Render(line)
+			}
+		} else if strings.HasPrefix(trimmed, "User:") || strings.HasPrefix(trimmed, "Agent:") {
+			if !strings.HasPrefix(trimmed, "\x1b[") {
+				line = lipgloss.NewStyle().Foreground(Yellow).Bold(true).Background(PaneBg).Render(line)
+			}
+		}
+
+		out = append(out, line)
+	}
+
+	return strings.Join(out, "\n")
 }

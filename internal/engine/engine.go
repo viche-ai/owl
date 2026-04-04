@@ -104,7 +104,7 @@ func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 
 	// ── Step 2: Scaffolding (Hatching) ──
 	e.setState("hatching")
-	e.appendLog("[Thinking] Scaffolding agent identity...\n")
+	e.appendLog("[Thinking]\nScaffolding agent identity...\n")
 
 	scaffoldPrompt := fmt.Sprintf(`You are an AI agent being initialized.
 Your purpose based on user request: %s
@@ -365,7 +365,7 @@ func (e *AgentEngine) ListTasks() string {
 
 func (e *AgentEngine) processMessage(content string) {
 	e.setState("flying")
-	e.appendLog("\n[Thinking]...\n")
+	e.appendLog("\n[Thinking]\n")
 
 	// Register inbound message as a new task
 	source := "user"
@@ -507,7 +507,13 @@ func (e *AgentEngine) runWithTools() string {
 
 			// If debug verbosity is enabled, print full result, else print truncated
 			e.logDebug(fmt.Sprintf("> Result: %s\n", result))
-			e.logVerbose("> Tool execution completed.\n")
+
+			outcome := "Success"
+			lowerResult := strings.ToLower(result)
+			if strings.Contains(lowerResult, "error") || strings.Contains(lowerResult, "failed") || strings.Contains(lowerResult, "unknown tool") {
+				outcome = "Failed"
+			}
+			e.logVerbose(fmt.Sprintf("> Tool execution completed: %s\n", outcome))
 
 			e.messages = append(e.messages, llm.Message{
 				Role:       llm.RoleTool,
@@ -517,7 +523,7 @@ func (e *AgentEngine) runWithTools() string {
 		}
 
 		// Loop back to let the LLM respond to the tool results
-		e.appendLog("\n[Thinking]...\n")
+		e.appendLog("\n[Thinking]\n")
 	}
 }
 
