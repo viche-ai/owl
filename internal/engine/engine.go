@@ -329,8 +329,12 @@ Your initial plan was:
 	e.setState("flying")
 
 	// ── Step 5: Kickoff — send the original description as the first task ──
-	e.appendLog("> Starting work on task...\n")
-	e.processMessage(args.Description)
+	if !args.Ambient {
+		e.appendLog("> Starting work on task...\n")
+		e.processMessage(args.Description)
+	} else {
+		e.appendLog("> Ambient mode active. Waiting for messages...\n")
+	}
 	e.setState("idle")
 
 	// ── Step 6: Conversation loop ──
@@ -463,9 +467,10 @@ func (e *AgentEngine) runWithTools() string {
 		var toolRefs []llm.ToolCallRef
 		for _, tc := range toolCalls {
 			toolRefs = append(toolRefs, llm.ToolCallRef{
-				ID:        tc.ID,
-				Name:      tc.Name,
-				Arguments: tc.Arguments,
+				ID:               tc.ID,
+				Name:             tc.Name,
+				Arguments:        tc.Arguments,
+				ThoughtSignature: tc.ThoughtSignature,
 			})
 		}
 		e.messages = append(e.messages, llm.Message{

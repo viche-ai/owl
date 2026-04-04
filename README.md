@@ -2,6 +2,8 @@
 
 Owl is an open-source terminal tool for spawning, managing, and interacting with AI coding agents. Think of it as the next evolution of AI coding tools—built from the ground up around **visibility**, **interactivity**, and **networked agent communication**.
 
+![Owl Demo](assets/owl-demo.gif)
+
 ## Why Owl?
 
 Today's agent workflows are often black boxes. You spawn a sub-agent and have no idea what it's doing, whether it's stuck, or how to intervene. Owl makes every agent visible, inspectable, and interactive directly from your terminal.
