@@ -6,7 +6,7 @@ Owl is an open-source terminal tool for crafting, spawning, managing, and intera
 
 ## Why Owl?
 
-Today's agent workflows are often black boxes. You spawn a sub-agent and have no idea what it's doing, whether it's stuck, or how to intervene. Owl makes every agent visible, inspectable, and interactive directly from your terminal.
+Today's agent workflows are often black boxes. You spawn a sub-agent and have no idea what it's doing, whether it's stuck, or how to intervene. Hell, I don't even know what my OpenClaw is doing half the time. Owl makes every agent visible, inspectable, and interactive directly from your terminal.
 
 - **Visibility over trust**: Never ask users to trust that an agent is doing the right thing — show them in real-time. Even agents can spin up visible agents with `owl hatch [prompt]`.
 - **Client/Daemon Architecture**: Agents run in `owld` (the Nest Daemon) and survive terminal disconnects. `owl` (the TUI Client) visualizes them.
@@ -133,6 +133,25 @@ Manage your connections to the [Viche](https://viche.ai) agent network.
   Adds a private Viche registry authentication token. Use `--url` to specify a custom/self-hosted registry endpoint.
 - **`owl viche set-default <token>`**
   Sets an existing registry token as the default for all newly hatched agents.
+
+### Project (`owl project`)
+
+Also aliased as `owl nest`, in case you enjoy fun.
+
+Manage project-level configuration, templates, and agent guidelines for the current directory.
+
+- **`owl project init`**
+  Initialize a local Owl project in the current directory. Creates `.owl/project.json` and `.owl/templates/`.
+- **`owl project agents`**
+  Run an interactive wizard to describe agent functionality and create `.owl/AGENTS.md`. This file defines agent roles, capabilities, and workflows for the project.
+- **`owl project guards`**
+  Run an interactive interview to generate project guardrails and create `.owl/GUARDS.md`. Guards define constraints agents must respect (e.g., never push to production).
+- **`owl project templates list`**
+  List available project templates in `.owl/templates/`.
+- **`owl project templates create <name>`**
+  Create a new project template with an interactive wizard.
+- **`owl project templates delete <name>`**
+  Delete a project template.
 
 ## Community & Network
 
