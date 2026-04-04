@@ -1,10 +1,12 @@
-.PHONY: all build clean test lint run-owl run-owld install-hooks
+.PHONY: all build clean test lint run-owl run-owld install-hooks dist distclean
 
 # Build parameters
 BIN_DIR := bin
+DIST_DIR := dist
 OWL_BIN := $(BIN_DIR)/owl
 OWLD_BIN := $(BIN_DIR)/owld
 GO_FILES := $(shell find . -name '*.go' -type f)
+VERSION ?= $$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 
 # Default target
 all: build
@@ -15,12 +17,12 @@ build: $(OWL_BIN) $(OWLD_BIN)
 $(OWL_BIN): $(GO_FILES)
 	@echo "Building owl..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(OWL_BIN) ./cmd/owl
+	@go build -ldflags="-s -w" -o $(OWL_BIN) ./cmd/owl
 
 $(OWLD_BIN): $(GO_FILES)
 	@echo "Building owld..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(OWLD_BIN) ./cmd/owld
+	@go build -ldflags="-s -w" -o $(OWLD_BIN) ./cmd/owld
 
 # Run the client
 run-owl: build
@@ -52,3 +54,18 @@ clean:
 	@echo "Cleaning..."
 	@rm -rf $(BIN_DIR)
 	@go clean
+
+# Build release distribution tarballs for current platform
+dist: build
+	@echo "Creating distribution archive..."
+	@mkdir -p $(DIST_DIR)
+	@ARCH="$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/armv7l/arm/')"
+	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]')
+	@ARCHIVE="owl_$(VERSION)_$${OS}_$${ARCH}.tar.gz"
+	@tar -czf "$(DIST_DIR)/$${ARCHIVE}" -C $(BIN_DIR) owl owld
+	@echo "Created $(DIST_DIR)/$${ARCHIVE}"
+
+# Clean dist directory
+distclean:
+	@echo "Cleaning dist..."
+	@rm -rf $(DIST_DIR)

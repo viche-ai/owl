@@ -1,0 +1,14 @@
+[Unit]
+Description=owl daemon (owld)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=INSTALLDIR/owld
+Restart=on-failure
+RestartSec=5
+Environment=HOME=HOME
+Environment=USER=USER
+
+[Install]
+WantedBy=default.target

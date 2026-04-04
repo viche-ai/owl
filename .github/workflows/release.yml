@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos:
+          - darwin
+          - linux
+        goarch:
+          - amd64
+          - arm64
+        exclude:
+          - goos: darwin
+            goarch: arm
+          - goos: linux
+            goarch: arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Get version
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_ref=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -ldflags="-s -w" -o dist/owl ./cmd/owl
+          go build -ldflags="-s -w" -o dist/owld ./cmd/owld
+
+      - name: Package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ARCHIVE_NAME="owl_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
+          tar -czf "dist/${ARCHIVE_NAME}" -C dist owl owld
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.short_ref }}
+          files: dist/*.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
