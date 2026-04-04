@@ -18,7 +18,7 @@ import (
 const SocketPath = "/tmp/owld.sock"
 
 func main() {
-	os.Remove(SocketPath)
+	_ = os.Remove(SocketPath)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -76,7 +76,7 @@ func main() {
 		// Wait a brief moment to allow Run functions to execute cleanup
 		// (closing the channels and waiting for websocket disconnects)
 		time.Sleep(1 * time.Second)
-		os.Remove(SocketPath)
+		_ = os.Remove(SocketPath)
 		log.Println("owld shutdown complete.")
 		os.Exit(0)
 	}()

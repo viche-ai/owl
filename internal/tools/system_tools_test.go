@@ -57,7 +57,7 @@ func TestShellExecMissingCommand(t *testing.T) {
 func TestFileRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("hello file"), 0644)
+	_ = os.WriteFile(path, []byte("hello file"), 0644)
 
 	st := &SystemTools{WorkDir: dir}
 	result := st.Execute(ToolCall{Name: "file_read", Args: map[string]interface{}{
@@ -82,7 +82,7 @@ func TestFileReadNonexistent(t *testing.T) {
 
 func TestFileReadRelativePath(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "relative.txt"), []byte("relative content"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "relative.txt"), []byte("relative content"), 0644)
 
 	st := &SystemTools{WorkDir: dir}
 	result := st.Execute(ToolCall{Name: "file_read", Args: map[string]interface{}{
@@ -140,7 +140,7 @@ func TestFileWriteCreatesParentDirs(t *testing.T) {
 func TestFileEdit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
-	os.WriteFile(path, []byte("hello world\nfoo bar\n"), 0644)
+	_ = os.WriteFile(path, []byte("hello world\nfoo bar\n"), 0644)
 
 	st := &SystemTools{WorkDir: dir}
 	result := st.Execute(ToolCall{Name: "file_edit", Args: map[string]interface{}{
@@ -165,7 +165,7 @@ func TestFileEdit(t *testing.T) {
 func TestFileEditNotFound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
-	os.WriteFile(path, []byte("hello world\n"), 0644)
+	_ = os.WriteFile(path, []byte("hello world\n"), 0644)
 
 	st := &SystemTools{WorkDir: dir}
 	result := st.Execute(ToolCall{Name: "file_edit", Args: map[string]interface{}{
@@ -182,7 +182,7 @@ func TestFileEditNotFound(t *testing.T) {
 func TestFileEditAmbiguous(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
-	os.WriteFile(path, []byte("foo\nfoo\n"), 0644)
+	_ = os.WriteFile(path, []byte("foo\nfoo\n"), 0644)
 
 	st := &SystemTools{WorkDir: dir}
 	result := st.Execute(ToolCall{Name: "file_edit", Args: map[string]interface{}{

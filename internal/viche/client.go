@@ -80,7 +80,7 @@ func (c *Client) Register(name string, capabilities []string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to register with viche: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -111,7 +111,7 @@ func (c *Client) SendMessage(toAgentID, fromAgentID, msgType, body string) error
 	if err != nil {
 		return fmt.Errorf("send failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)

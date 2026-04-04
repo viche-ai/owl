@@ -22,10 +22,10 @@ type AgentEngine struct {
 	Mu     func(func())
 	Router *llm.Router
 
-	logFile    *os.File
-	messages   []llm.Message
-	provider   llm.Provider
-	model      string
+	logFile     *os.File
+	messages    []llm.Message
+	provider    llm.Provider
+	model       string
 	vicheTools  *tools.VicheTools
 	systemTools *tools.SystemTools
 	taskTools   *tools.TaskTools
@@ -37,14 +37,14 @@ func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 	// Open log file
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".owl", "logs")
-	os.MkdirAll(logDir, 0755)
+	_ = os.MkdirAll(logDir, 0755)
 
 	// Use a temporary name for the log file until we scaffold the real name
 	tempName := sanitizeName(args.Description)
 	logPath := filepath.Join(logDir, fmt.Sprintf("agent-%s-%d.log", tempName, time.Now().Unix()))
 	if f, err := os.Create(logPath); err == nil {
 		e.logFile = f
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 	}
 
 	e.appendLog("> Booting agent engine...\n")
@@ -412,7 +412,7 @@ func (e *AgentEngine) runWithTools() string {
 		e.setState("thinking") // drives TUI animation
 
 		// Inject agent ID so the CLI providers can use it for session persistence
-		ctx = context.WithValue(ctx, "session_id", e.State.ID)
+		ctx = context.WithValue(ctx, llm.SessionIDKey, e.State.ID)
 
 		if len(e.toolDefs) > 0 {
 			stream, err = e.provider.ChatStreamWithTools(ctx, e.model, e.messages, e.toolDefs)
@@ -529,7 +529,7 @@ func sanitizeName(name string) string {
 func (e *AgentEngine) appendLog(text string) {
 	e.Mu(func() { e.State.Logs += text })
 	if e.logFile != nil {
-		e.logFile.WriteString(text)
+		_, _ = e.logFile.WriteString(text)
 	}
 }
 
@@ -539,7 +539,7 @@ func (e *AgentEngine) logVerbose(text string) {
 	e.Mu(func() { v = e.State.Verbosity })
 
 	if e.logFile != nil {
-		e.logFile.WriteString(text)
+		_, _ = e.logFile.WriteString(text)
 	}
 
 	if v == "verbose" || v == "debug" {
@@ -553,7 +553,7 @@ func (e *AgentEngine) logDebug(text string) {
 	e.Mu(func() { v = e.State.Verbosity })
 
 	if e.logFile != nil {
-		e.logFile.WriteString(text)
+		_, _ = e.logFile.WriteString(text)
 	}
 
 	if v == "debug" {

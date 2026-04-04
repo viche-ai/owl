@@ -88,9 +88,9 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 	}
 
 	// Debug: write request body to log
-	os.MkdirAll("/tmp/owl-debug", 0755)
+	_ = os.MkdirAll("/tmp/owl-debug", 0755)
 	debugFile := fmt.Sprintf("/tmp/owl-debug/openai-%d.json", time.Now().UnixMilli())
-	os.WriteFile(debugFile, bodyBytes, 0644)
+	_ = os.WriteFile(debugFile, bodyBytes, 0644)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -109,7 +109,7 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(b))
 	}
 
@@ -118,7 +118,7 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/event-stream") && !strings.Contains(ct, "application/x-ndjson") {
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		// Try to parse as error
 		var errResp struct {
 			Error struct {
@@ -135,15 +135,15 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 
 	// Debug: log raw SSE to file
 	home, _ := os.UserHomeDir()
-	os.MkdirAll(home+"/.owl/debug", 0755)
+	_ = os.MkdirAll(home+"/.owl/debug", 0755)
 	sseLogPath := fmt.Sprintf("%s/.owl/debug/sse-%d.log", home, time.Now().UnixMilli())
 	sseLog, _ := os.Create(sseLogPath)
 
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if sseLog != nil {
-			defer sseLog.Close()
+			defer func() { _ = sseLog.Close() }()
 		}
 
 		// Track tool call assembly across chunks
@@ -155,7 +155,7 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 		for scanner.Scan() {
 			line := scanner.Text()
 			if sseLog != nil {
-				fmt.Fprintf(sseLog, "%s\n", line)
+				_, _ = fmt.Fprintf(sseLog, "%s\n", line)
 			}
 			if !strings.HasPrefix(line, "data: ") {
 				continue

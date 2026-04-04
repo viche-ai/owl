@@ -50,6 +50,12 @@ type Usage struct {
 	TotalTokens      int
 }
 
+type ContextKey string
+
+const (
+	SessionIDKey ContextKey = "session_id"
+)
+
 type Provider interface {
 	ChatStream(ctx context.Context, model string, messages []Message) (<-chan StreamEvent, error)
 	ChatStreamWithTools(ctx context.Context, model string, messages []Message, tools []ToolDef) (<-chan StreamEvent, error)

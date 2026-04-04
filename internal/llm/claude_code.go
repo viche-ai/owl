@@ -30,7 +30,7 @@ func (p *ClaudeCodeProvider) ChatStreamWithTools(ctx context.Context, model stri
 	lastMsg := messages[len(messages)-1]
 	prompt := lastMsg.Content
 
-	sessionID, ok := ctx.Value("session_id").(string)
+	sessionID, ok := ctx.Value(SessionIDKey).(string)
 	if !ok || sessionID == "" {
 		sessionID = "00000000-0000-0000-0000-000000000001"
 	} else {
@@ -108,11 +108,12 @@ func (p *ClaudeCodeProvider) ChatStreamWithTools(ctx context.Context, model stri
 			case "content_block_delta":
 				if delta, ok := event["delta"].(map[string]interface{}); ok {
 					deltaType, _ := delta["type"].(string)
-					if deltaType == "text_delta" {
+					switch deltaType {
+					case "text_delta":
 						if text, ok := delta["text"].(string); ok && text != "" {
 							ch <- StreamEvent{Delta: text}
 						}
-					} else if deltaType == "input_json_delta" {
+					case "input_json_delta":
 						if partial, ok := delta["partial_json"].(string); ok {
 							currentToolArgs.WriteString(partial)
 						}
