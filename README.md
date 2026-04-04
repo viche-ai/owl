@@ -57,6 +57,21 @@ This will produce two binaries in the `bin/` directory: `owl` and `owld`.
 
 Configuration lives in `~/.owl/config.json`. You can set your default models, provider API keys, and Viche registry tokens.
 
+### Interactive Setup
+
+For first-time configuration, run the interactive setup wizard:
+
+```bash
+owl setup
+```
+
+This will guide you through:
+1. Selecting your default LLM provider (OpenAI, Anthropic, Google, Ollama, or Custom)
+2. Entering your API key for that provider
+3. Optionally joining a private Viche registry (recommended for security)
+
+### Manual Configuration
+
 ```json
 {
   "models": {
