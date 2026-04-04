@@ -128,6 +128,7 @@ Owl comes with a set of CLI commands to manage agents, configuration, and networ
   Opens the Terminal User Interface (TUI) to visualize and interact with running agents.
 - **`owl hatch [prompt...]`**
   Spawns a new agent with the given task description.
+  - `-n, --count <number>`: Spawn multiple agents simultaneously (default: 1). Use this for parallel task execution.
   - `--model <id>`: Override the default model for this agent (e.g. `google/gemini-2.5-pro`).
   - `--name <name>`: Give the agent a specific display name.
   - `--ambient`: Start the agent in the background waiting for messages on the network, instead of immediately working on the prompt.
@@ -136,6 +137,14 @@ Owl comes with a set of CLI commands to manage agents, configuration, and networ
   - `--effort <level>`: Set reasoning effort (`low`, `medium`, `high`).
   - `--registry <token>`: Override the Viche registry connection for this specific agent.
   - `--dir <path>`: Set the working directory for the agent. Enables project-level context and guardrails from `.owl/project.json`, and sets the root for file operations.
+
+- **`owl clone <agent_id>`**
+  Clones an existing agent, spawning a new one with identical parameters (model, prompt, configuration, working directory).
+  - `-n, --count <number>`: Spawn multiple clones simultaneously (default: 1).
+  
+  The `<agent_id>` can be an agent index (shown in the TUI sidebar) or an agent name.
+  
+  In the TUI, press `c` while viewing an agent tab to clone it directly.
 
 ### Configuration (`owl config`)
 
