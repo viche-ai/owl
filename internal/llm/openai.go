@@ -47,14 +47,22 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
 			var tcs []map[string]interface{}
 			for _, tc := range m.ToolCalls {
-				tcs = append(tcs, map[string]interface{}{
+				tcObj := map[string]interface{}{
 					"id":   tc.ID,
 					"type": "function",
 					"function": map[string]interface{}{
 						"name":      tc.Name,
 						"arguments": tc.Arguments,
 					},
-				})
+				}
+				if tc.ThoughtSignature != "" {
+					tcObj["extra_content"] = map[string]interface{}{
+						"google": map[string]interface{}{
+							"thought_signature": tc.ThoughtSignature,
+						},
+					}
+				}
+				tcs = append(tcs, tcObj)
 			}
 			msg["tool_calls"] = tcs
 		}
@@ -191,8 +199,27 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 					for i, tc := range tcs {
 						tcMap, _ := tc.(map[string]interface{})
 						idx := i
+
 						if idxVal, ok := tcMap["index"].(float64); ok {
 							idx = int(idxVal)
+						} else {
+							// Handle providers (like Gemini) that omit the "index" field
+							if deltaID, ok := tcMap["id"].(string); ok && deltaID != "" {
+								found := false
+								for k, v := range toolCalls {
+									if v.ID == deltaID {
+										idx = k
+										found = true
+										break
+									}
+								}
+								if !found {
+									idx = 0
+									for toolCalls[idx] != nil {
+										idx++
+									}
+								}
+							}
 						}
 
 						if _, exists := toolCalls[idx]; !exists {
@@ -207,6 +234,14 @@ func (p *OpenAIProvider) ChatStreamWithTools(ctx context.Context, model string, 
 							}
 							if args, ok := fn["arguments"].(string); ok {
 								toolCalls[idx].Arguments += args
+							}
+						}
+						// Extract Gemini thought_signature
+						if extra, ok := tcMap["extra_content"].(map[string]interface{}); ok {
+							if google, ok := extra["google"].(map[string]interface{}); ok {
+								if ts, ok := google["thought_signature"].(string); ok {
+									toolCalls[idx].ThoughtSignature = ts
+								}
 							}
 						}
 					}

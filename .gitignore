@@ -5,8 +5,8 @@
 *.so
 *.dylib
 bin/
-owl
-owld
+/owl
+/owld
 
 # Test binary, built with `go test -c`
 *.test

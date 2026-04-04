@@ -19,9 +19,10 @@ type Message struct {
 
 // ToolCallRef stores a reference to a tool call made by the assistant
 type ToolCallRef struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Arguments        string `json:"arguments"`
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 type ToolDef struct {
@@ -39,9 +40,10 @@ type StreamEvent struct {
 }
 
 type ToolCallEvent struct {
-	ID        string
-	Name      string
-	Arguments string
+	ID               string
+	Name             string
+	Arguments        string
+	ThoughtSignature string
 }
 
 type Usage struct {

@@ -1,6 +1,8 @@
 # Owl 🦉
 
-Owl is an open-source terminal tool for spawning, managing, and interacting with AI coding agents. Think of it as the next evolution of AI coding tools—built from the ground up around **visibility**, **interactivity**, and **networked agent communication**.
+Owl is an open-source terminal tool for crafting, spawning, managing, and interacting with AI agents. Think of it as the next evolution of AI coding tools—built from the ground up around **visibility**, **interactivity**, and **networked agent communication**. Our goal is not to replace tools like [opencode](https://opencode.ai/), but instead work with them to make agent creation and orchestration the focal point of complex workflows.
+
+![Owl Demo](assets/owl-demo.gif)
 
 ## Why Owl?
 
@@ -74,6 +76,48 @@ You can also import configurations from other tools:
 ```bash
 owl config import opencode --path /path/to/config
 ```
+
+## CLI Reference
+
+Owl comes with a set of CLI commands to manage agents, configuration, and network settings.
+
+### Core Commands
+
+- **`owl`**
+  Opens the Terminal User Interface (TUI) to visualize and interact with running agents.
+- **`owl hatch [prompt...]`**
+  Spawns a new agent with the given task description.
+  - `--model <id>`: Override the default model for this agent (e.g. `google/gemini-2.5-pro`).
+  - `--name <name>`: Give the agent a specific display name.
+  - `--ambient`: Start the agent in the background waiting for messages on the network, instead of immediately working on the prompt.
+  - `--template <name>`: Scaffold the agent using a specific JSON template.
+  - `--thinking`: Enable extended reasoning/thinking mode (for supported models).
+  - `--effort <level>`: Set reasoning effort (`low`, `medium`, `high`).
+  - `--registry <token>`: Override the Viche registry connection for this specific agent.
+
+### Configuration (`owl config`)
+
+Manage your local model settings and API keys.
+
+- **`owl config show`**
+  Displays your current configuration, default model, and configured providers.
+- **`owl config set-key <provider> <api_key>`**
+  Saves an API key for a specific provider (e.g., `anthropic`, `google`, `openai`).
+- **`owl config set-model <provider/model>`**
+  Sets the default model used when hatching new agents (e.g., `anthropic/claude-sonnet-4-6`).
+- **`owl config import <source>`**
+  Imports API keys from other tools. Currently supports `opencode` and `openclaw`.
+
+### Network (`owl viche`)
+
+Manage your connections to the [Viche](https://viche.ai) agent network.
+
+- **`owl viche status`**
+  Shows your current active registries and which one is set as default.
+- **`owl viche add-registry <token>`**
+  Adds a private Viche registry authentication token. Use `--url` to specify a custom/self-hosted registry endpoint.
+- **`owl viche set-default <token>`**
+  Sets an existing registry token as the default for all newly hatched agents.
 
 ## Community & Network
 

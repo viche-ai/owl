@@ -48,6 +48,7 @@ type HatchArgs struct {
 	Thinking    bool
 	Effort      string
 	Name        string
+	Ambient     bool
 }
 
 type HatchReply struct {

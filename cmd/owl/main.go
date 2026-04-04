@@ -28,6 +28,7 @@ var (
 	thinkingFlag bool
 	effortFlag   string
 	nameFlag     string
+	ambientFlag  bool
 )
 
 type Template struct {
@@ -61,6 +62,7 @@ var hatchCmd = &cobra.Command{
 			Thinking:    thinkingFlag,
 			Effort:      effortFlag,
 			Name:        nameFlag,
+			Ambient:     ambientFlag,
 		}
 
 		if templateFlag != "" {
@@ -117,6 +119,7 @@ func main() {
 	hatchCmd.Flags().BoolVar(&thinkingFlag, "thinking", false, "Enable extended thinking")
 	hatchCmd.Flags().StringVar(&effortFlag, "effort", "", "Set reasoning effort (low/medium/high)")
 	hatchCmd.Flags().StringVar(&nameFlag, "name", "", "Override the agent's display name")
+	hatchCmd.Flags().BoolVar(&ambientFlag, "ambient", false, "Hatch into an ambient background mode (waits for messages without starting work immediately)")
 
 	rootCmd.AddCommand(hatchCmd)
 	if err := rootCmd.Execute(); err != nil {
