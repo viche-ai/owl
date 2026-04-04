@@ -57,6 +57,10 @@ func (r *Router) Resolve(modelID string) (Provider, string, error) {
 	providerName := parts[0]
 	modelName := parts[1]
 
+	if providerName == "cli" && modelName == "claude-code" {
+		return NewClaudeCodeProvider(), "claude-code", nil
+	}
+
 	provider, ok := r.providers[providerName]
 	if !ok {
 		return nil, "", fmt.Errorf("no provider configured for %q. Run 'owl config import openclaw' or add it to ~/.owl/config.json", providerName)

@@ -49,7 +49,7 @@ var hatchCmd = &cobra.Command{
 			fmt.Println("Error connecting to owld daemon. Run 'go run ./cmd/owld' in another terminal.")
 			os.Exit(1)
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		desc := strings.Join(args, " ")
 

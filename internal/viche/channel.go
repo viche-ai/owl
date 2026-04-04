@@ -100,7 +100,7 @@ func (c *Channel) Connect() error {
 
 	// Also join registry channel if token set
 	if c.token != "" {
-		c.writeMsg(newPhoenixMsg(joinRef, c.nextRef(), "registry:"+c.token, "phx_join", map[string]interface{}{}))
+		_ = c.writeMsg(newPhoenixMsg(joinRef, c.nextRef(), "registry:"+c.token, "phx_join", map[string]interface{}{}))
 	}
 
 	// Start heartbeat
@@ -157,7 +157,7 @@ func (c *Channel) heartbeatLoop() {
 		if c.conn == nil {
 			return
 		}
-		c.writeMsg(newPhoenixMsg("", c.nextRef(), "phoenix", "heartbeat", map[string]interface{}{}))
+		_ = c.writeMsg(newPhoenixMsg("", c.nextRef(), "phoenix", "heartbeat", map[string]interface{}{}))
 	}
 }
 
@@ -245,8 +245,8 @@ func (c *Channel) Close() {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if c.conn != nil {
-		c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		c.conn.Close()
+		_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		_ = c.conn.Close()
 		c.conn = nil
 	}
 }

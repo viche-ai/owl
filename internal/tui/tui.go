@@ -51,7 +51,7 @@ func fetchAgents() ([]ipc.AgentState, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	var reply ipc.ListReply
 	err = c.Call("Daemon.ListAgents", &ipc.ListArgs{}, &reply)
 	return reply.Agents, err
@@ -62,9 +62,9 @@ func sendUserMessage(agentIndex int, content string) {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	var reply ipc.SendMessageReply
-	c.Call("Daemon.SendMessage", &ipc.SendMessageArgs{AgentIndex: agentIndex, Content: content}, &reply)
+	_ = c.Call("Daemon.SendMessage", &ipc.SendMessageArgs{AgentIndex: agentIndex, Content: content}, &reply)
 }
 
 func sendHatch(desc string) (string, error) {
@@ -72,7 +72,7 @@ func sendHatch(desc string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	var reply ipc.HatchReply
 	err = c.Call("Daemon.Hatch", &ipc.HatchArgs{Description: desc}, &reply)
 	if err != nil {
@@ -86,7 +86,7 @@ func sendKill(agentIndex int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	var reply ipc.KillReply
 	err = c.Call("Daemon.Kill", &ipc.KillArgs{AgentIndex: agentIndex}, &reply)
 	if err != nil {
@@ -95,12 +95,13 @@ func sendKill(agentIndex int) (string, error) {
 	return reply.Message, nil
 }
 
+//lint:ignore U1000 unused
 func sendAgentConfig(agentIndex int, config ipc.SetConfigArgs) (string, error) {
 	c, err := rpc.Dial("unix", "/tmp/owld.sock")
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	config.AgentIndex = agentIndex
 	var reply ipc.SetConfigReply
 	err = c.Call("Daemon.SetAgentConfig", &config, &reply)
@@ -110,12 +111,13 @@ func sendAgentConfig(agentIndex int, config ipc.SetConfigArgs) (string, error) {
 	return reply.Message, nil
 }
 
+//lint:ignore U1000 unused
 func sendAgentModel(agentIndex int, modelID string) (string, error) {
 	c, err := rpc.Dial("unix", "/tmp/owld.sock")
 	if err != nil {
 		return "", err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	var reply ipc.SetModelReply
 	err = c.Call("Daemon.SetAgentModel", &ipc.SetModelArgs{AgentIndex: agentIndex, ModelID: modelID}, &reply)
 	if err != nil {
@@ -124,6 +126,7 @@ func sendAgentModel(agentIndex int, modelID string) (string, error) {
 	return reply.Message, nil
 }
 
+//lint:ignore U1000 unused
 func (m *model) handleAgentCommand(agentIndex int, cmdStr string) {
 	parts := strings.SplitN(cmdStr, " ", 2)
 	cmd := parts[0]
@@ -134,26 +137,26 @@ func (m *model) handleAgentCommand(agentIndex int, cmdStr string) {
 			return
 		}
 		modelID := strings.TrimSpace(parts[1])
-		sendAgentModel(agentIndex, modelID)
+		_, _ = sendAgentModel(agentIndex, modelID)
 	case "/thinking":
 		if len(parts) < 2 {
 			return
 		}
 		arg := strings.TrimSpace(parts[1])
 		val := arg == "on" || arg == "true"
-		sendAgentConfig(agentIndex, ipc.SetConfigArgs{Thinking: &val})
+		_, _ = sendAgentConfig(agentIndex, ipc.SetConfigArgs{Thinking: &val})
 	case "/effort":
 		if len(parts) < 2 {
 			return
 		}
 		val := strings.TrimSpace(parts[1])
-		sendAgentConfig(agentIndex, ipc.SetConfigArgs{Effort: &val})
+		_, _ = sendAgentConfig(agentIndex, ipc.SetConfigArgs{Effort: &val})
 	case "/verbosity":
 		if len(parts) < 2 {
 			return
 		}
 		val := strings.TrimSpace(parts[1])
-		sendAgentConfig(agentIndex, ipc.SetConfigArgs{Verbosity: &val})
+		_, _ = sendAgentConfig(agentIndex, ipc.SetConfigArgs{Verbosity: &val})
 	}
 }
 

@@ -160,7 +160,7 @@ func (st *SystemTools) shellExec(args map[string]interface{}) string {
 		}
 		return result
 	case <-time.After(120 * time.Second):
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return "Error: command timed out after 120 seconds"
 	}
 }

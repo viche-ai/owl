@@ -65,7 +65,7 @@ func (p *AnthropicProvider) ChatStreamWithTools(ctx context.Context, model strin
 			}
 			for _, tc := range m.ToolCalls {
 				var input interface{}
-				json.Unmarshal([]byte(tc.Arguments), &input)
+				_ = json.Unmarshal([]byte(tc.Arguments), &input)
 				content = append(content, map[string]interface{}{
 					"type":  "tool_use",
 					"id":    tc.ID,
@@ -112,9 +112,9 @@ func (p *AnthropicProvider) ChatStreamWithTools(ctx context.Context, model strin
 	}
 
 	// Debug: write request body to log
-	os.MkdirAll("/tmp/owl-debug", 0755)
+	_ = os.MkdirAll("/tmp/owl-debug", 0755)
 	debugFile := fmt.Sprintf("/tmp/owl-debug/anthropic-%d.json", time.Now().UnixMilli())
-	os.WriteFile(debugFile, bodyBytes, 0644)
+	_ = os.WriteFile(debugFile, bodyBytes, 0644)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -132,7 +132,7 @@ func (p *AnthropicProvider) ChatStreamWithTools(ctx context.Context, model strin
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(b))
 	}
 
@@ -140,7 +140,7 @@ func (p *AnthropicProvider) ChatStreamWithTools(ctx context.Context, model strin
 
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		var currentToolID string
 		var currentToolName string
@@ -174,11 +174,12 @@ func (p *AnthropicProvider) ChatStreamWithTools(ctx context.Context, model strin
 			case "content_block_delta":
 				if delta, ok := event["delta"].(map[string]interface{}); ok {
 					deltaType, _ := delta["type"].(string)
-					if deltaType == "text_delta" {
+					switch deltaType {
+					case "text_delta":
 						if text, ok := delta["text"].(string); ok && text != "" {
 							ch <- StreamEvent{Delta: text}
 						}
-					} else if deltaType == "input_json_delta" {
+					case "input_json_delta":
 						if partial, ok := delta["partial_json"].(string); ok {
 							currentToolArgs.WriteString(partial)
 						}

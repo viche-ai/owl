@@ -39,7 +39,7 @@ type TaskLedger struct {
 func NewTaskLedger(agentID string) *TaskLedger {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".owl", "agents", agentID)
-	os.MkdirAll(dir, 0755)
+	_ = os.MkdirAll(dir, 0755)
 
 	tl := &TaskLedger{
 		filePath: filepath.Join(dir, "tasks.jsonl"),
@@ -88,7 +88,7 @@ func (tl *TaskLedger) AddTask(summary, source string) *Task {
 	}
 	tl.nextID++
 	tl.tasks = append(tl.tasks, t)
-	tl.save()
+	_ = tl.save()
 	return &t
 }
 
@@ -100,7 +100,7 @@ func (tl *TaskLedger) UpdateTask(id string, status TaskStatus) {
 			if status == TaskCompleted {
 				tl.tasks[i].Completed = time.Now().UTC().Format(time.RFC3339)
 			}
-			tl.save()
+			_ = tl.save()
 			return
 		}
 	}

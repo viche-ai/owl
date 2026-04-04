@@ -26,7 +26,7 @@ func DiscoverModels(baseURL, apiKey string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("models endpoint unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("models endpoint returned %d", resp.StatusCode)

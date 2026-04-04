@@ -71,14 +71,14 @@ func TestClient_Register(t *testing.T) {
 		}
 
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 
 		if body["name"] != "test-agent" {
 			t.Errorf("expected name 'test-agent', got %v", body["name"])
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(RegisterResponse{ID: "agent-123"})
+		_ = json.NewEncoder(w).Encode(RegisterResponse{ID: "agent-123"})
 	}))
 	defer ts.Close()
 
@@ -104,7 +104,7 @@ func TestClient_SendMessage(t *testing.T) {
 		}
 
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 
 		if body["from"] != "agent-src" {
 			t.Errorf("expected from 'agent-src', got %v", body["from"])
