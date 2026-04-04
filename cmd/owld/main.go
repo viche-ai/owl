@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/rpc"
 	"os"
 	"os/signal"
@@ -82,5 +85,38 @@ func main() {
 	}()
 
 	log.Println("owld daemon listening on", SocketPath)
+
+	go func() {
+		http.HandleFunc("/api/v1/stream", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "Failed to read body", http.StatusBadRequest)
+				return
+			}
+			var event ipc.ExternalStreamEvent
+			if err := json.Unmarshal(body, &event); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+			var reply ipc.StreamExternalReply
+			if err := daemon.StreamExternalAgent(&event, &reply); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(reply); err != nil {
+				log.Println("Failed to encode response:", err)
+			}
+		})
+		log.Println("HTTP API listening on localhost:7890")
+		if err := http.ListenAndServe("localhost:7890", nil); err != nil {
+			log.Println("HTTP server error:", err)
+		}
+	}()
+
 	rpc.Accept(listener)
 }

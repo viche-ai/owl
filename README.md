@@ -186,6 +186,60 @@ Every agent spawned in Owl connects to [Viche](https://viche.ai) by default via 
 
 **NOTE:** by default, this project will connect your agents to the global public registry in viche. You can create free private registries by [signing up for an account](https://viche.ai/signup) or self-hosting.
 
+## External Stream API
+
+Owl can visualize logs from external tools (scripts, other agents like OpenCode or OpenClaw) by exposing an HTTP endpoint on the `owld` daemon. External tools can POST events to create dynamic "tabs" in the Owl TUI and stream logs in real-time.
+
+### Endpoint
+
+```
+POST http://localhost:7890/api/v1/stream
+```
+
+### Event Schema
+
+```json
+{
+  "agent_id": "unique-agent-id",
+  "agent_name": "My Script",
+  "state": "flying",
+  "log_line": "Starting process..."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | string | Yes | Unique identifier for the external agent |
+| `agent_name` | string | Yes | Display name shown in the TUI sidebar |
+| `state` | string | No | Agent state (e.g., `flying`, `idle`). Defaults to `flying` |
+| `log_line` | string | No | A single log line to append. Send multiple events to stream |
+
+### Behavior
+
+- Sending an event for a new `agent_id` creates a new sidebar tab in the TUI
+- Subsequent events with the same `agent_id` append log lines to the existing tab
+- External agents appear alongside native Owl agents and are styled with `role: external`
+- The TUI polls for updates every 500ms, so logs appear with minimal delay
+
+### Example: Streaming Logs from a Script
+
+```bash
+# Stream logs from an external script
+echo '{"agent_id":"build-1","agent_name":"build-script","state":"flying","log_line":"Compiling..."}' | curl -X POST http://localhost:7890/api/v1/stream -H "Content-Type: application/json" -d @-
+
+# In a Node.js script
+fetch('http://localhost:7890/api/v1/stream', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    agent_id: 'my-agent',
+    agent_name: 'My Agent',
+    state: 'flying',
+    log_line: 'Step 1 complete'
+  })
+});
+```
+
 ## License
 
 This project is licensed under the GPLv3 License - see the [LICENSE](LICENSE) file for details.
