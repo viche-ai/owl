@@ -196,6 +196,57 @@ type ListReply struct {
 	Agents []AgentState
 }
 
+type ExternalStreamEvent struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	State     string `json:"state"`
+	LogLine   string `json:"log_line"`
+}
+
+type StreamExternalReply struct {
+	Success bool
+	Message string
+}
+
+func (s *Service) StreamExternalAgent(event *ExternalStreamEvent, reply *StreamExternalReply) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	var agent *AgentState
+
+	for _, ag := range s.Agents {
+		if ag.ID == event.AgentID {
+			agent = ag
+			break
+		}
+	}
+
+	if agent == nil {
+		agent = &AgentState{
+			ID:        event.AgentID,
+			Name:      event.AgentName,
+			Role:      "external",
+			State:     "flying",
+			ModelID:   "external",
+			Verbosity: "verbose",
+		}
+		s.Agents = append(s.Agents, agent)
+		s.InboxChans[len(s.Agents)-1] = make(chan InboundMessage, 64)
+	}
+
+	if event.State != "" {
+		agent.State = event.State
+	}
+
+	if event.LogLine != "" {
+		agent.Logs += event.LogLine + "\n"
+	}
+
+	reply.Success = true
+	reply.Message = "Event received"
+	return nil
+}
+
 func (s *Service) ListAgents(args *ListArgs, reply *ListReply) error {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
