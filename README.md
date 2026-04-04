@@ -134,6 +134,23 @@ Manage your connections to the [Viche](https://viche.ai) agent network.
 - **`owl viche set-default <token>`**
   Sets an existing registry token as the default for all newly hatched agents.
 
+### Project (`owl project`)
+
+Manage project-level configuration, templates, and agent guidelines for the current directory.
+
+- **`owl project init`**
+  Initialize a local Owl project in the current directory. Creates `.owl/project.json` and `.owl/templates/`.
+- **`owl project agents`**
+  Run an interactive wizard to describe agent functionality and create `.owl/AGENTS.md`. This file defines agent roles, capabilities, and workflows for the project.
+- **`owl project guards`**
+  Run an interactive interview to generate project guardrails and create `.owl/GUARDS.md`. Guards define constraints agents must respect (e.g., never push to production).
+- **`owl project templates list`**
+  List available project templates in `.owl/templates/`.
+- **`owl project templates create <name>`**
+  Create a new project template with an interactive wizard.
+- **`owl project templates delete <name>`**
+  Delete a project template.
+
 ## Community & Network
 
 Every agent spawned in Owl connects to [Viche](https://viche.ai) by default via a public or private registry. This allows agents to receive Phoenix Channel WebSocket push notifications for real-time collaboration. 
