@@ -6,7 +6,9 @@ import (
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/viche-ai/owl/internal/ipc"
@@ -30,6 +32,7 @@ var (
 	nameFlag     string
 	ambientFlag  bool
 	dirFlag      string
+	countFlag    int
 )
 
 type Template struct {
@@ -104,17 +107,87 @@ var hatchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		var reply ipc.HatchReply
-		err = client.Call("Daemon.Hatch", &hatchArgs, &reply)
-		if err != nil {
-			fmt.Println("RPC error:", err)
-			return
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var errCount int
+
+		for i := 0; i < countFlag; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				var reply ipc.HatchReply
+				err := client.Call("Daemon.Hatch", &hatchArgs, &reply)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					fmt.Printf("RPC error for agent %d: %v\n", idx+1, err)
+					errCount++
+				} else {
+					fmt.Printf("[%d/%d] %s\n", idx+1, countFlag, reply.Message)
+				}
+			}(i)
 		}
-		fmt.Println(reply.Message)
+		wg.Wait()
+
+		if errCount > 0 {
+			os.Exit(1)
+		}
+	},
+}
+
+var cloneCmd = &cobra.Command{
+	Use:   "clone <agent_id>",
+	Short: "Clone an existing agent",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		client, err := rpc.Dial("unix", "/tmp/owld.sock")
+		if err != nil {
+			fmt.Println("Error connecting to owld daemon. Run 'go run ./cmd/owld' in another terminal.")
+			os.Exit(1)
+		}
+		defer func() { _ = client.Close() }()
+
+		agentID := strings.TrimSpace(args[0])
+		agentIndex := -1
+		if n, err := strconv.Atoi(agentID); err == nil {
+			agentIndex = n - 1
+		}
+
+		if agentIndex < 0 {
+			fmt.Println("Error: agent_id must be a number (agent index)")
+			os.Exit(1)
+		}
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var errCount int
+
+		for i := 0; i < countFlag; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				var reply ipc.CloneResponse
+				err := client.Call("Daemon.CloneAgent", &ipc.CloneRequest{AgentIndex: agentIndex}, &reply)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					fmt.Printf("RPC error for clone %d: %v\n", idx+1, err)
+					errCount++
+				} else {
+					fmt.Printf("[%d/%d] %s (new ID: %s)\n", idx+1, countFlag, reply.Message, reply.NewID)
+				}
+			}(i)
+		}
+		wg.Wait()
+
+		if errCount > 0 {
+			os.Exit(1)
+		}
 	},
 }
 
 func main() {
+	hatchCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "Number of agents to hatch")
 	hatchCmd.Flags().StringVar(&modelFlag, "model", "", "Override the default model")
 	hatchCmd.Flags().StringVar(&templateFlag, "template", "", "Use a prompt template")
 	hatchCmd.Flags().StringVar(&registryFlag, "registry", "", "Override the Viche registry")
@@ -124,7 +197,10 @@ func main() {
 	hatchCmd.Flags().BoolVar(&ambientFlag, "ambient", false, "Hatch into an ambient background mode (waits for messages without starting work immediately)")
 	hatchCmd.Flags().StringVar(&dirFlag, "dir", "", "Set the working directory for the agent (finds .owl/config.json and sets file operation root)")
 
+	cloneCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "Number of clones to spawn")
+
 	rootCmd.AddCommand(hatchCmd)
+	rootCmd.AddCommand(cloneCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

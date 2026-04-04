@@ -95,6 +95,20 @@ func sendKill(agentIndex int) (string, error) {
 	return reply.Message, nil
 }
 
+func sendClone(agentIndex int) (string, error) {
+	c, err := rpc.Dial("unix", "/tmp/owld.sock")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = c.Close() }()
+	var reply ipc.CloneResponse
+	err = c.Call("Daemon.CloneAgent", &ipc.CloneRequest{AgentIndex: agentIndex}, &reply)
+	if err != nil {
+		return "", err
+	}
+	return reply.Message, nil
+}
+
 //lint:ignore U1000 unused
 func sendAgentConfig(agentIndex int, config ipc.SetConfigArgs) (string, error) {
 	c, err := rpc.Dial("unix", "/tmp/owld.sock")
@@ -261,6 +275,34 @@ func (m *model) handleCommand(cmdStr string) {
 			}
 		}
 
+	case "clone":
+		if len(parts) < 2 {
+			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Usage: clone <index or name>"))
+			return
+		}
+		arg := strings.TrimSpace(parts[1])
+		agentIndex := -1
+		if n, err := strconv.Atoi(arg); err == nil {
+			agentIndex = n - 1
+		} else {
+			for i, ag := range m.agents {
+				if strings.EqualFold(ag.Name, arg) {
+					agentIndex = i
+					break
+				}
+			}
+		}
+		if agentIndex < 0 || agentIndex >= len(m.agents) {
+			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Agent not found: "+arg))
+			return
+		}
+		msg, err := sendClone(agentIndex)
+		if err != nil {
+			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
+		} else {
+			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Green).Render(msg))
+		}
+
 	case "viche":
 		if len(parts) < 2 {
 			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Usage: viche <add-registry|set-default|status> [token]"))
@@ -327,6 +369,7 @@ func (m *model) handleCommand(cmdStr string) {
 	case "help":
 		m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Yellow).Render("Commands:"))
 		m.consoleHistory = append(m.consoleHistory, "  hatch <desc>               Spawn a new agent")
+		m.consoleHistory = append(m.consoleHistory, "  clone <index or name>      Clone an existing agent")
 		m.consoleHistory = append(m.consoleHistory, "  kill <index or name>       Stop and remove an agent")
 		m.consoleHistory = append(m.consoleHistory, "  viche add-registry <token> Add private registry")
 		m.consoleHistory = append(m.consoleHistory, "  viche set-default <token>  Set default registry")
@@ -436,6 +479,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput.Blur()
 			}
 			m.refreshViewport()
+			return m, nil
+		case "c":
+			if m.activeTab > 0 {
+				agentIndex := m.activeTab - 1
+				msg, err := sendClone(agentIndex)
+				if err != nil {
+					m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
+				} else {
+					m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Green).Render(msg))
+				}
+			}
 			return m, nil
 		case "enter":
 			if m.activeTab == 0 {
