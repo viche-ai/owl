@@ -6,7 +6,7 @@ Owl is an open-source terminal tool for crafting, spawning, managing, and intera
 
 ## Why Owl?
 
-Today's agent workflows are often black boxes. You spawn a sub-agent and have no idea what it's doing, whether it's stuck, or how to intervene. Owl makes every agent visible, inspectable, and interactive directly from your terminal.
+Today's agent workflows are often black boxes. You spawn a sub-agent and have no idea what it's doing, whether it's stuck, or how to intervene. Hell, I don't even know what my OpenClaw is doing half the time. Owl makes every agent visible, inspectable, and interactive directly from your terminal.
 
 - **Visibility over trust**: Never ask users to trust that an agent is doing the right thing — show them in real-time. Even agents can spin up visible agents with `owl hatch [prompt]`.
 - **Client/Daemon Architecture**: Agents run in `owld` (the Nest Daemon) and survive terminal disconnects. `owl` (the TUI Client) visualizes them.
@@ -135,6 +135,8 @@ Manage your connections to the [Viche](https://viche.ai) agent network.
   Sets an existing registry token as the default for all newly hatched agents.
 
 ### Project (`owl project`)
+
+Also aliased as `owl nest`, in case you enjoy fun.
 
 Manage project-level configuration, templates, and agent guidelines for the current directory.
 

@@ -12,8 +12,9 @@ import (
 )
 
 var projectCmd = &cobra.Command{
-	Use:   "project",
-	Short: "Manage project-level configuration",
+	Use:     "project",
+	Aliases: []string{"nest"},
+	Short:   "Manage project-level configuration",
 }
 
 var initCmd = &cobra.Command{
