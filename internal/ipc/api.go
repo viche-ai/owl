@@ -26,6 +26,9 @@ type Service struct {
 
 	// Channel-based message routing: agentIndex -> channel of inbound messages
 	InboxChans map[int]chan InboundMessage
+
+	// CloneArgs stores the original hatch parameters for each agent (used for cloning)
+	CloneArgs map[int]*CloneArgs
 }
 
 type InboundMessage struct {
@@ -37,6 +40,7 @@ func NewService() *Service {
 	return &Service{
 		Agents:     []*AgentState{},
 		InboxChans: make(map[int]chan InboundMessage),
+		CloneArgs:  make(map[int]*CloneArgs),
 	}
 }
 
@@ -55,6 +59,27 @@ type HatchArgs struct {
 type HatchReply struct {
 	Success bool
 	Message string
+}
+
+type CloneArgs struct {
+	Description string
+	Registry    string
+	ModelID     string
+	Thinking    bool
+	Effort      string
+	Name        string
+	Ambient     bool
+	WorkDir     string
+}
+
+type CloneRequest struct {
+	AgentIndex int
+}
+
+type CloneResponse struct {
+	Success bool
+	Message string
+	NewID   string
 }
 
 var RunEngineHook func(state *AgentState, mu func(func()), args *HatchArgs, inbox chan InboundMessage)
@@ -91,6 +116,18 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 	inbox := make(chan InboundMessage, 64)
 	s.InboxChans[idx] = inbox
 
+	// Store clone args for later use by CloneAgent
+	s.CloneArgs[idx] = &CloneArgs{
+		Description: args.Description,
+		Registry:    args.Registry,
+		ModelID:     args.ModelID,
+		Thinking:    args.Thinking,
+		Effort:      args.Effort,
+		Name:        args.Name,
+		Ambient:     args.Ambient,
+		WorkDir:     args.WorkDir,
+	}
+
 	if RunEngineHook != nil {
 		go RunEngineHook(newAgent, func(f func()) {
 			s.Mu.Lock()
@@ -101,6 +138,84 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 
 	reply.Success = true
 	reply.Message = "Egg hatched for: " + args.Description
+	return nil
+}
+
+func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	if req.AgentIndex < 0 || req.AgentIndex >= len(s.Agents) {
+		return fmt.Errorf("agent index %d out of range", req.AgentIndex)
+	}
+
+	cloneArgs, ok := s.CloneArgs[req.AgentIndex]
+	if !ok {
+		return fmt.Errorf("no clone args found for agent index %d", req.AgentIndex)
+	}
+
+	idx := len(s.Agents)
+
+	cloneName := cloneArgs.Name
+	if cloneName == "" {
+		cloneName = cloneArgs.Description
+	}
+	if cloneName == "" {
+		cloneName = s.Agents[req.AgentIndex].Name + "-clone"
+	} else {
+		cloneName = cloneName + "-clone"
+	}
+
+	newAgent := &AgentState{
+		ID:        fmt.Sprintf("%d", idx+1),
+		Name:      cloneName,
+		Role:      "auto",
+		Ctx:       "0 / 128k",
+		State:     "hatching",
+		Logs:      "",
+		ModelID:   cloneArgs.ModelID,
+		Thinking:  cloneArgs.Thinking,
+		Effort:    cloneArgs.Effort,
+		Verbosity: "verbose",
+	}
+
+	s.Agents = append(s.Agents, newAgent)
+
+	inbox := make(chan InboundMessage, 64)
+	s.InboxChans[idx] = inbox
+
+	s.CloneArgs[idx] = &CloneArgs{
+		Description: cloneArgs.Description,
+		Registry:    cloneArgs.Registry,
+		ModelID:     cloneArgs.ModelID,
+		Thinking:    cloneArgs.Thinking,
+		Effort:      cloneArgs.Effort,
+		Name:        cloneName,
+		Ambient:     cloneArgs.Ambient,
+		WorkDir:     cloneArgs.WorkDir,
+	}
+
+	if RunEngineHook != nil {
+		hatchArgs := &HatchArgs{
+			Description: cloneArgs.Description,
+			Registry:    cloneArgs.Registry,
+			ModelID:     cloneArgs.ModelID,
+			Thinking:    cloneArgs.Thinking,
+			Effort:      cloneArgs.Effort,
+			Name:        cloneName,
+			Ambient:     cloneArgs.Ambient,
+			WorkDir:     cloneArgs.WorkDir,
+		}
+		go RunEngineHook(newAgent, func(f func()) {
+			s.Mu.Lock()
+			defer s.Mu.Unlock()
+			f()
+		}, hatchArgs, inbox)
+	}
+
+	res.Success = true
+	res.Message = "Cloned agent: " + s.Agents[req.AgentIndex].Name
+	res.NewID = newAgent.ID
 	return nil
 }
 
@@ -296,6 +411,17 @@ func (s *Service) Kill(args *KillArgs, reply *KillReply) error {
 		}
 	}
 	s.InboxChans = newInboxChans
+
+	// Rebuild clone args map with corrected indices
+	newCloneArgs := make(map[int]*CloneArgs)
+	for i, ca := range s.CloneArgs {
+		if i > args.AgentIndex {
+			newCloneArgs[i-1] = ca
+		} else {
+			newCloneArgs[i] = ca
+		}
+	}
+	s.CloneArgs = newCloneArgs
 
 	reply.Success = true
 	reply.Message = "✓ Killed: " + name
