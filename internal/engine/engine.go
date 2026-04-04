@@ -266,7 +266,11 @@ Output ONLY valid JSON.`, args.Description)
 	}
 
 	// ── Step 3b: System tools (shell, file read/write/edit) ──
-	e.systemTools = &tools.SystemTools{WorkDir: home + "/dev/viche-ai/viche"}
+	workDir := args.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	e.systemTools = &tools.SystemTools{WorkDir: workDir}
 	for _, def := range e.systemTools.Definitions() {
 		e.toolDefs = append(e.toolDefs, llm.ToolDef{
 			Name:        def.Name,
@@ -289,7 +293,34 @@ Output ONLY valid JSON.`, args.Description)
 	e.appendLog("> Task ledger initialized\n")
 
 	// ── Step 4: Setup main system prompt ──
-	systemPrompt := fmt.Sprintf(`You are an AI agent. Your identity: %s
+	projectCfg, _ := config.LoadProjectConfig(workDir)
+
+	globalPrompt := e.Cfg.SystemPrompt
+	if globalPrompt == "" {
+		globalPrompt = config.DefaultSystemPrompt()
+	}
+
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString("[GLOBAL]\n")
+	promptBuilder.WriteString(globalPrompt)
+	promptBuilder.WriteString("\n\n")
+
+	if projectCfg.Context != "" {
+		promptBuilder.WriteString("[PROJECT CONTEXT]\n")
+		promptBuilder.WriteString(projectCfg.Context)
+		promptBuilder.WriteString("\n\n")
+	}
+
+	if len(projectCfg.Guardrails) > 0 {
+		promptBuilder.WriteString("[PROJECT GUARDRAILS]\nCRITICAL GUARDRAILS:\n")
+		for _, g := range projectCfg.Guardrails {
+			promptBuilder.WriteString("- " + g + "\n")
+		}
+		promptBuilder.WriteString("\n")
+	}
+
+	fmt.Fprintf(&promptBuilder, `[RUNTIME]
+You are an AI agent. Your identity: %s
 Your purpose: %s
 Your capabilities: %v
 
@@ -320,6 +351,8 @@ Your initial plan was:
 			return ""
 		}(),
 		planText)
+
+	systemPrompt := promptBuilder.String()
 
 	e.messages = []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},

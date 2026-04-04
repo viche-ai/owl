@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,7 +47,9 @@ func runProjectInit(cmd *cobra.Command, args []string) {
 
 	projectData := fmt.Sprintf(`{
   "version": "1.0",
-  "created_at": "%s"
+  "created_at": "%s",
+  "context": "",
+  "guardrails": []
 }
 `, "2026-04-05")
 
@@ -148,8 +151,9 @@ var guardsCmd = &cobra.Command{
 
 func runGuardsCmd(cmd *cobra.Command, args []string) {
 	owlDir := ".owl"
+	projectFile := filepath.Join(owlDir, "project.json")
 
-	if _, err := os.Stat(filepath.Join(owlDir, "project.json")); os.IsNotExist(err) {
+	if _, err := os.Stat(projectFile); os.IsNotExist(err) {
 		fmt.Println("Error: Owl project not initialized. Run 'owl project init' first.")
 		os.Exit(1)
 	}
@@ -162,6 +166,8 @@ func runGuardsCmd(cmd *cobra.Command, args []string) {
 	var guards strings.Builder
 	guards.WriteString("# Project Guardrails\n\n")
 	guards.WriteString("These guardrails define constraints that all agents working on this project must respect.\n\n")
+
+	var guardrailList []string
 
 	var confirmGuardrails bool
 
@@ -184,6 +190,10 @@ func runGuardsCmd(cmd *cobra.Command, args []string) {
 		guards.WriteString("- **NEVER** push directly to production branches\n")
 		guards.WriteString("- **NEVER** modify production configuration without explicit approval\n")
 		guards.WriteString("- **ALWAYS** route production changes through the standard review process\n\n")
+		guardrailList = append(guardrailList,
+			"NEVER push directly to production branches",
+			"NEVER modify production configuration without explicit approval",
+			"ALWAYS route production changes through the standard review process")
 	}
 
 	if hasGit {
@@ -191,6 +201,10 @@ func runGuardsCmd(cmd *cobra.Command, args []string) {
 		guards.WriteString("- Commit messages must be descriptive and follow conventional commits format\n")
 		guards.WriteString("- **NEVER** force push to shared branches\n")
 		guards.WriteString("- Create feature branches for all non-trivial changes\n\n")
+		guardrailList = append(guardrailList,
+			"Commit messages must be descriptive and follow conventional commits format",
+			"NEVER force push to shared branches",
+			"Create feature branches for all non-trivial changes")
 	}
 
 	var customRules string
@@ -215,6 +229,7 @@ func runGuardsCmd(cmd *cobra.Command, args []string) {
 			line = strings.TrimSpace(line)
 			if line != "" {
 				fmt.Fprintf(&guards, "- %s\n", line)
+				guardrailList = append(guardrailList, line)
 			}
 		}
 	}
@@ -225,7 +240,35 @@ func runGuardsCmd(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n✓ Guardrails saved to %s\n", guardsFile)
+	var projectCfg struct {
+		Version    string   `json:"version"`
+		CreatedAt  string   `json:"created_at"`
+		Context    string   `json:"context"`
+		Guardrails []string `json:"guardrails"`
+	}
+
+	b, err := os.ReadFile(projectFile)
+	if err != nil {
+		fmt.Println("Error reading project.json:", err)
+		os.Exit(1)
+	}
+	if err := json.Unmarshal(b, &projectCfg); err != nil {
+		fmt.Println("Error parsing project.json:", err)
+		os.Exit(1)
+	}
+	projectCfg.Guardrails = guardrailList
+
+	b, err = json.MarshalIndent(projectCfg, "", "  ")
+	if err != nil {
+		fmt.Println("Error marshaling project.json:", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(projectFile, b, 0644); err != nil {
+		fmt.Println("Error writing project.json:", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n✓ Guardrails saved to %s and %s\n", projectFile, guardsFile)
 }
 
 var templatesCmd = &cobra.Command{
