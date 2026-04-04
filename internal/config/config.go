@@ -29,8 +29,13 @@ type VicheConfig struct {
 }
 
 type Config struct {
-	Models ModelsConfig `json:"models"`
-	Viche  VicheConfig  `json:"viche"`
+	Models       ModelsConfig `json:"models"`
+	Viche        VicheConfig  `json:"viche"`
+	SystemPrompt string       `json:"system_prompt,omitempty"`
+}
+
+func DefaultSystemPrompt() string {
+	return "You are a collaborative AI agent operating on the Viche network. You must proactively communicate with other agents to solve problems."
 }
 
 func ConfigPath() string {

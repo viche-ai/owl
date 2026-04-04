@@ -49,6 +49,7 @@ type HatchArgs struct {
 	Effort      string
 	Name        string
 	Ambient     bool
+	WorkDir     string
 }
 
 type HatchReply struct {

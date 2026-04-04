@@ -29,6 +29,7 @@ var (
 	effortFlag   string
 	nameFlag     string
 	ambientFlag  bool
+	dirFlag      string
 )
 
 type Template struct {
@@ -63,6 +64,7 @@ var hatchCmd = &cobra.Command{
 			Effort:      effortFlag,
 			Name:        nameFlag,
 			Ambient:     ambientFlag,
+			WorkDir:     dirFlag,
 		}
 
 		if templateFlag != "" {
@@ -120,6 +122,7 @@ func main() {
 	hatchCmd.Flags().StringVar(&effortFlag, "effort", "", "Set reasoning effort (low/medium/high)")
 	hatchCmd.Flags().StringVar(&nameFlag, "name", "", "Override the agent's display name")
 	hatchCmd.Flags().BoolVar(&ambientFlag, "ambient", false, "Hatch into an ambient background mode (waits for messages without starting work immediately)")
+	hatchCmd.Flags().StringVar(&dirFlag, "dir", "", "Set the working directory for the agent (finds .owl/config.json and sets file operation root)")
 
 	rootCmd.AddCommand(hatchCmd)
 	if err := rootCmd.Execute(); err != nil {

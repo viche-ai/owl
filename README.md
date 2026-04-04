@@ -83,13 +83,39 @@ This will guide you through:
   },
   "viche": {
     "defaultRegistry": "public"
-  }
+  },
+  "system_prompt": "You are a collaborative AI agent operating on the Viche network..."
 }
 ```
 
 You can also import configurations from other tools:
 ```bash
 owl config import opencode --path /path/to/config
+```
+
+### Tiered System Prompts
+
+Owl assembles the system prompt in layers when hatching an agent, giving you precise control over agent context at each level:
+
+1. **[GLOBAL]** — From `~/.owl/config.json` (`system_prompt` field). Applies to all agents network-wide. Default: "You are a collaborative AI agent operating on the Viche network..."
+
+2. **[PROJECT CONTEXT]** — From `.owl/project.json` (`context` field). Applies to all agents working in this repository. Set via `owl project init` or by editing the file directly.
+
+3. **[PROJECT GUARDRAILS]** — From `.owl/project.json` (`guardrails` array). Critical constraints agents must follow. Set via `owl project guards`.
+
+4. **[RUNTIME]** — The specific task description passed via `owl hatch <prompt>`.
+
+Example `project.json`:
+```json
+{
+  "version": "1.0",
+  "context": "This is a React TypeScript project using Next.js and Tailwind CSS",
+  "guardrails": [
+    "Always use TypeScript strict mode",
+    "Never commit secrets or credentials",
+    "Follow React hooks rules strictly"
+  ]
+}
 ```
 
 ## CLI Reference
@@ -109,6 +135,7 @@ Owl comes with a set of CLI commands to manage agents, configuration, and networ
   - `--thinking`: Enable extended reasoning/thinking mode (for supported models).
   - `--effort <level>`: Set reasoning effort (`low`, `medium`, `high`).
   - `--registry <token>`: Override the Viche registry connection for this specific agent.
+  - `--dir <path>`: Set the working directory for the agent. Enables project-level context and guardrails from `.owl/project.json`, and sets the root for file operations.
 
 ### Configuration (`owl config`)
 
@@ -145,7 +172,7 @@ Manage project-level configuration, templates, and agent guidelines for the curr
 - **`owl project agents`**
   Run an interactive wizard to describe agent functionality and create `.owl/AGENTS.md`. This file defines agent roles, capabilities, and workflows for the project.
 - **`owl project guards`**
-  Run an interactive interview to generate project guardrails and create `.owl/GUARDS.md`. Guards define constraints agents must respect (e.g., never push to production).
+  Run an interactive interview to generate project guardrails. Saved to `.owl/project.json` (for agent context) and `.owl/GUARDS.md` (human-readable). Guards define constraints agents must respect (e.g., never push to production).
 - **`owl project templates list`**
   List available project templates in `.owl/templates/`.
 - **`owl project templates create <name>`**
