@@ -411,6 +411,9 @@ func (e *AgentEngine) runWithTools() string {
 
 		e.setState("thinking") // drives TUI animation
 
+		// Inject agent ID so the CLI providers can use it for session persistence
+		ctx = context.WithValue(ctx, "session_id", e.State.ID)
+
 		if len(e.toolDefs) > 0 {
 			stream, err = e.provider.ChatStreamWithTools(ctx, e.model, e.messages, e.toolDefs)
 		} else {
