@@ -32,11 +32,12 @@ type ToolDef struct {
 }
 
 type StreamEvent struct {
-	Delta    string
-	Done     bool
-	Usage    *Usage
-	Error    error
-	ToolCall *ToolCallEvent
+	Delta     string
+	Reasoning string
+	Done      bool
+	Usage     *Usage
+	Error     error
+	ToolCall  *ToolCallEvent
 }
 
 type ToolCallEvent struct {

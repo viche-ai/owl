@@ -478,6 +478,9 @@ func (e *AgentEngine) runWithTools() string {
 				textResponse.WriteString(event.Delta)
 				e.appendLog(event.Delta)
 			}
+			if event.Reasoning != "" {
+				e.appendLog(event.Reasoning)
+			}
 			if event.ToolCall != nil {
 				toolCalls = append(toolCalls, event.ToolCall)
 			}

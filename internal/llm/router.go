@@ -32,6 +32,8 @@ func NewRouter(cfg *config.Config) *Router {
 	for name, pCfg := range cfg.Models.Providers {
 		if name == "anthropic" {
 			r.providers[name] = NewAnthropicProvider(pCfg.APIKey, pCfg.BaseURL)
+		} else if name == "minimax" {
+			r.providers[name] = NewMinimaxProvider(pCfg.APIKey)
 		} else if pCfg.BaseURL != "" {
 			// Custom base URL = OpenAI-compatible endpoint
 			r.providers[name] = NewOpenAIProvider(pCfg.APIKey, pCfg.BaseURL)
