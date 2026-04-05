@@ -82,3 +82,40 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+## Commit Message Conventions
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) for all version control changes.
+
+### Format
+
+```
+<type>(<scope>): <description>
+```
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `docs` | Documentation only changes |
+| `style` | Changes that do not affect the meaning of the code |
+| `refactor` | A code change that neither fixes a bug nor adds a feature |
+| `test` | Adding or correcting tests |
+| `chore` | Changes to build process, tools, or dependencies |
+| `ci` | Changes to CI configuration |
+
+### Examples
+
+```bash
+feat(install): add one-line curl install script
+fix(tui): prevent crash when agent name is empty
+docs(readme): add quick install instructions
+```
+
+### Rules
+
+1. Use imperative mood in description ("add feature" not "added feature")
+2. Keep subject line under 80 characters
+3. Do not end subject line with a period

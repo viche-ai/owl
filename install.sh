@@ -91,7 +91,8 @@ fetch_latest_release() {
         *) err "Network error while fetching release info." ;;
     esac
 
-    TAG_NAME="$(printf '%s' "$RELEASE_JSON" | grep '"tag_name"' | sed 's/.*"tag_name"[^"]*"v\?\([^"]*\)".*/\1/' | tr -d 'v')"
+    TAG_NAME="$(printf '%s' "$RELEASE_JSON" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')"
+    TAG_NAME="${TAG_NAME#v}"
     if [ -z "$TAG_NAME" ]; then
         err "Could not parse release tag. Please ensure a release exists at https://github.com/${REPO}/releases/latest"
     fi
