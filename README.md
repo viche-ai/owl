@@ -1,18 +1,38 @@
 # Owl 🦉
 
-Owl is an open-source terminal tool for crafting, spawning, managing, and interacting with AI agents. Think of it as the next evolution of AI coding tools—built from the ground up around **visibility**, **interactivity**, and **networked agent communication**. Our goal is not to replace tools like [opencode](https://opencode.ai/), but instead work with them to make agent creation and orchestration the focal point of complex workflows.
+Owl is an open-source, terminal-native workspace to **design, run, and monitor your AI agents**. 
 
-![Owl Demo](assets/owl-demo.gif)
+Rather than acting as just another coding assistant, Owl is the infrastructure that hosts them. It uses a persistent background daemon and a beautiful terminal UI (TUI) to turn isolated agents (like OpenCode, Claude Code, and OpenClaw) into a resilient, multiplayer swarm connected via the [Viche](https://viche.ai) network.
 
 ## Why Owl?
 
-Today's agent workflows are often black boxes. You spawn a sub-agent and have no idea what it's doing, whether it's stuck, or how to intervene. Owl makes every agent visible, inspectable, and interactive directly from your terminal.
+Today's agent workflows suffer from the **"3-Terminal Fallacy"**. If you run three agents in three terminal panes, they are completely isolated. They can't coordinate, you have to manually ferry context between them, and if you accidentally close the terminal, they die instantly. 
 
-- **Visibility over trust**: Never ask users to trust that an agent is doing the right thing — show them in real-time. Even agents can spin up visible agents with `owl hatch [prompt]`.
-- **Client/Daemon Architecture**: Agents run in `owld` (the Nest Daemon) and survive terminal disconnects. `owl` (the TUI Client) visualizes them.
-- **Viche Integration**: Every hatched agent binds to the Viche network, enabling remote inspection, discovery, and communication.
-- **Multi-Provider**: Native support for Anthropic, OpenAI, Google, Groq, Together, Ollama, and more.
-- **Terminal Native**: No web UI required. Everything is inspectable and controllable from a beautiful TUI powered by Bubble Tea.
+Owl changes the paradigm:
+- **Design:** Craft reusable agent templates and enforce project-level guardrails.
+- **Run:** Agents run inside `owld` (the background daemon) and survive terminal disconnects.
+- **Monitor:** A unified TUI visualizes everything—from internal LLM loops to external sub-agents spawned by other frameworks.
+
+## Workflows & Use Cases
+
+Owl is built for scenarios where single-shot, isolated agents break down.
+
+### 1. Observe and interact with external sub-agents
+Tools like OpenCode and Claude Code spawn sub-agents that are often invisible to the user. Owl acts as a **Universal Visualizer**. By running your favorite orchestrators *inside* Owl, their hidden sub-agents stream their logs directly to `owld`, exposing them as native TUI tabs. You get full observability and the ability to intervene at any time.
+
+### 2. Spawn worker swarms on the network
+Need to process a backlog of issues or refactor a massive directory? Use Owl to hatch a fleet of identical worker agents (e.g., `owl hatch "Fix lint errors" -n 5`). They sit on the Viche network, pull work, and process it in parallel.
+
+### 3. Design, manage, and port agents between repos
+Stop rewriting the same system prompts. Owl allows you to define reusable Agent Templates globally (`~/.owl/config.json`), while enforcing strict, repository-specific guardrails locally (`.owl/config.json` — e.g., *"Never run `git push`"*). Your specialized reviewers and coders travel with you, adapting safely to whatever codebase they are hatched in.
+
+### 4. Cross-machine collaboration (Multiplayer)
+Because every agent hatched in Owl automatically binds to the Viche network, they aren't constrained to `localhost`. Your local frontend agent can hit an API blocker and seamlessly send a Viche message to your co-founder's backend agent running on a completely different laptop across the world to negotiate a contract change.
+
+### 5. Persistent background execution
+Kick off a massive codebase refactor, close your laptop, and go catch a train. Because agents are managed by the `owld` daemon, they keep running in the background. When you reopen your terminal and type `owl`, the TUI instantly reconnects to the live action.
+
+---
 
 ## Architecture
 
@@ -23,7 +43,7 @@ Owl splits the client and daemon to allow agents to survive after you close the 
 
 ## Installation
 
-Owl is built in Go and ships as a two binaries. 
+Owl is built in Go and ships as two binaries. *(Note: A one-line install script is coming soon!)*
 
 To build from source:
 
@@ -77,53 +97,11 @@ You can also import configurations from other tools:
 owl config import opencode --path /path/to/config
 ```
 
-## CLI Reference
-
-Owl comes with a set of CLI commands to manage agents, configuration, and network settings.
-
-### Core Commands
-
-- **`owl`**
-  Opens the Terminal User Interface (TUI) to visualize and interact with running agents.
-- **`owl hatch [prompt...]`**
-  Spawns a new agent with the given task description.
-  - `--model <id>`: Override the default model for this agent (e.g. `google/gemini-2.5-pro`).
-  - `--name <name>`: Give the agent a specific display name.
-  - `--ambient`: Start the agent in the background waiting for messages on the network, instead of immediately working on the prompt.
-  - `--template <name>`: Scaffold the agent using a specific JSON template.
-  - `--thinking`: Enable extended reasoning/thinking mode (for supported models).
-  - `--effort <level>`: Set reasoning effort (`low`, `medium`, `high`).
-  - `--registry <token>`: Override the Viche registry connection for this specific agent.
-
-### Configuration (`owl config`)
-
-Manage your local model settings and API keys.
-
-- **`owl config show`**
-  Displays your current configuration, default model, and configured providers.
-- **`owl config set-key <provider> <api_key>`**
-  Saves an API key for a specific provider (e.g., `anthropic`, `google`, `openai`).
-- **`owl config set-model <provider/model>`**
-  Sets the default model used when hatching new agents (e.g., `anthropic/claude-sonnet-4-6`).
-- **`owl config import <source>`**
-  Imports API keys from other tools. Currently supports `opencode` and `openclaw`.
-
-### Network (`owl viche`)
-
-Manage your connections to the [Viche](https://viche.ai) agent network.
-
-- **`owl viche status`**
-  Shows your current active registries and which one is set as default.
-- **`owl viche add-registry <token>`**
-  Adds a private Viche registry authentication token. Use `--url` to specify a custom/self-hosted registry endpoint.
-- **`owl viche set-default <token>`**
-  Sets an existing registry token as the default for all newly hatched agents.
-
 ## Community & Network
 
 Every agent spawned in Owl connects to [Viche](https://viche.ai) by default via a public or private registry. This allows agents to receive Phoenix Channel WebSocket push notifications for real-time collaboration. 
 
-**NOTE:** by default, this project will connect your agents to the global public registry in viche. You can create free private registries by [signing up for an account](https://viche.ai/signup) or self-hosting.
+**NOTE:** By default, this project will connect your agents to the global public registry in Viche. You can create free private registries by [signing up for an account](https://viche.ai/signup) or self-hosting.
 
 ## License
 
