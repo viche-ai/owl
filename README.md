@@ -23,9 +23,17 @@ Owl splits the client and daemon to allow agents to survive after you close the 
 
 ## Installation
 
-Owl is built in Go and ships as a two binaries. 
+### Quick Install (Recommended)
 
-To build from source:
+```bash
+curl -fsSL https://owl.viche.ai/install.sh | bash
+```
+
+This installs `owl` and `owld` to `~/.local/bin` and sets up the launchd service on macOS (or systemd on Linux) to run the daemon in the background.
+
+### Build from Source
+
+Owl is built in Go and ships as two binaries.
 
 ```bash
 git clone https://github.com/viche-ai/owl.git

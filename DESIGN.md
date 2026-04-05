@@ -138,7 +138,7 @@ Lives in `~/.owl/config.json`:
 
 1. **One command to install, one command to start.** Owl ships as a single binary. No runtime dependencies.
 2. **Visibility over trust.** Never ask users to trust that an agent is doing the right thing — show them.
-3. **Viche funnels users in.** Works without an account (public registry), but private registries require one. Natural conversion path.
+3. **Viche as first-class citizen** Works without an account (public registry), but private registries require one.
 4. **Agents are networked by default.** Every agent is addressable and discoverable on the Viche network from the moment it hatches.
 5. **The terminal is the control surface.** No web UI required. Everything is inspectable and controllable from the terminal.
 
@@ -168,14 +168,14 @@ Lives in `~/.owl/config.json`:
 
 ## What's Next
 
-- [ ] Agent-to-agent messaging via the TUI (send messages from agent input field)
+- [x] Agent-to-agent messaging via the TUI (send messages from agent input field)
 - [ ] Persistent agent state (survive daemon restarts)
-- [ ] JSONL telemetry logging for agent actions
+- [x] JSONL telemetry logging for agent actions
 - [ ] Remote inspection (connect `owl` to a remote `owld` over the network)
 - [ ] Tool use / function calling in the LLM engine
 - [ ] File system sandboxing per agent
-- [ ] `owl` as a tool that other agents (OpenClaw, opencode) can invoke programmatically
-- [ ] One-line install script (`curl -fsSL https://owl.sh | sh`)
+- [x] `owl` as a tool that other agents (OpenClaw, opencode) can invoke programmatically
+- [x] One-line install script (`curl -fsSL https://owl.viche.ai/install.sh | sh`)
 
 ---
 

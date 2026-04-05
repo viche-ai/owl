@@ -1,0 +1,9 @@
+{
+  "version": "v0.1.0-alpha",
+  "context": "Owl is an open-source terminal tool for crafting, spawning, managing, and interacting with AI agents.",
+  "guardrails": [
+    "Use Conventional Commits format for all commits: feat:, fix:, docs:, style:, refactor:, test:, chore:, etc.",
+    "Commit messages must be descriptive and follow the format: <type>(<scope>): <description>",
+    "Example: feat(install): add sed-based tag parsing for GitHub releases"
+  ]
+}
