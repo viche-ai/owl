@@ -51,6 +51,11 @@ func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 	e.appendLog(fmt.Sprintf("> Log: %s\n", logPath))
 	time.Sleep(200 * time.Millisecond)
 
+	if args.Harness != "" {
+		e.runHarness(args, inbox)
+		return
+	}
+
 	// ── Step 1: Resolve LLM ──
 	modelID := args.ModelID
 	if modelID == "" {

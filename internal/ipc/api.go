@@ -54,6 +54,9 @@ type HatchArgs struct {
 	Name        string
 	Ambient     bool
 	WorkDir     string
+	Harness     string
+	HarnessArgs string
+	NoNetInject bool
 }
 
 type HatchReply struct {
@@ -70,6 +73,9 @@ type CloneArgs struct {
 	Name        string
 	Ambient     bool
 	WorkDir     string
+	Harness     string
+	HarnessArgs string
+	NoNetInject bool
 }
 
 type CloneRequest struct {
@@ -126,6 +132,9 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 		Name:        args.Name,
 		Ambient:     args.Ambient,
 		WorkDir:     args.WorkDir,
+		Harness:     args.Harness,
+		HarnessArgs: args.HarnessArgs,
+		NoNetInject: args.NoNetInject,
 	}
 
 	if RunEngineHook != nil {
@@ -193,6 +202,9 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 		Name:        cloneName,
 		Ambient:     cloneArgs.Ambient,
 		WorkDir:     cloneArgs.WorkDir,
+		Harness:     cloneArgs.Harness,
+		HarnessArgs: cloneArgs.HarnessArgs,
+		NoNetInject: cloneArgs.NoNetInject,
 	}
 
 	if RunEngineHook != nil {
@@ -205,6 +217,9 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 			Name:        cloneName,
 			Ambient:     cloneArgs.Ambient,
 			WorkDir:     cloneArgs.WorkDir,
+			Harness:     cloneArgs.Harness,
+			HarnessArgs: cloneArgs.HarnessArgs,
+			NoNetInject: cloneArgs.NoNetInject,
 		}
 		go RunEngineHook(newAgent, func(f func()) {
 			s.Mu.Lock()
