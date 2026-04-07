@@ -61,6 +61,7 @@ func (e *AgentEngine) runHarness(args *ipc.HatchArgs, inbox chan ipc.InboundMess
 	e.Mu(func() {
 		e.State.Role = "harness:" + name
 		e.State.ModelID = "harness/" + name
+		e.State.Harness = name
 	})
 	if e.State.Name == "" {
 		e.Mu(func() { e.State.Name = name })

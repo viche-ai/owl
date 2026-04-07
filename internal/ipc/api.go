@@ -15,6 +15,7 @@ type AgentState struct {
 	VicheID   string
 	Registry  string
 	ModelID   string
+	Harness   string
 	Thinking  bool
 	Effort    string
 	Verbosity string
@@ -111,6 +112,7 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 		State:     "hatching",
 		Logs:      "",
 		ModelID:   args.ModelID,
+		Harness:   args.Harness,
 		Thinking:  args.Thinking,
 		Effort:    args.Effort,
 		Verbosity: "verbose", // default verbosity
@@ -183,6 +185,7 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 		State:     "hatching",
 		Logs:      "",
 		ModelID:   cloneArgs.ModelID,
+		Harness:   cloneArgs.Harness,
 		Thinking:  cloneArgs.Thinking,
 		Effort:    cloneArgs.Effort,
 		Verbosity: "verbose",
@@ -358,6 +361,7 @@ func (s *Service) StreamExternalAgent(event *ExternalStreamEvent, reply *StreamE
 			Role:      "external",
 			State:     "flying",
 			ModelID:   "external",
+			Harness:   "external",
 			Verbosity: "verbose",
 		}
 		s.Agents = append(s.Agents, agent)
