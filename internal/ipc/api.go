@@ -15,6 +15,7 @@ type AgentState struct {
 	VicheID   string
 	Registry  string
 	ModelID   string
+	Harness   string
 	Thinking  bool
 	Effort    string
 	Verbosity string
@@ -54,6 +55,9 @@ type HatchArgs struct {
 	Name        string
 	Ambient     bool
 	WorkDir     string
+	Harness     string
+	HarnessArgs string
+	NoNetInject bool
 }
 
 type HatchReply struct {
@@ -70,6 +74,9 @@ type CloneArgs struct {
 	Name        string
 	Ambient     bool
 	WorkDir     string
+	Harness     string
+	HarnessArgs string
+	NoNetInject bool
 }
 
 type CloneRequest struct {
@@ -105,6 +112,7 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 		State:     "hatching",
 		Logs:      "",
 		ModelID:   args.ModelID,
+		Harness:   args.Harness,
 		Thinking:  args.Thinking,
 		Effort:    args.Effort,
 		Verbosity: "verbose", // default verbosity
@@ -126,6 +134,9 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 		Name:        args.Name,
 		Ambient:     args.Ambient,
 		WorkDir:     args.WorkDir,
+		Harness:     args.Harness,
+		HarnessArgs: args.HarnessArgs,
+		NoNetInject: args.NoNetInject,
 	}
 
 	if RunEngineHook != nil {
@@ -174,6 +185,7 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 		State:     "hatching",
 		Logs:      "",
 		ModelID:   cloneArgs.ModelID,
+		Harness:   cloneArgs.Harness,
 		Thinking:  cloneArgs.Thinking,
 		Effort:    cloneArgs.Effort,
 		Verbosity: "verbose",
@@ -193,6 +205,9 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 		Name:        cloneName,
 		Ambient:     cloneArgs.Ambient,
 		WorkDir:     cloneArgs.WorkDir,
+		Harness:     cloneArgs.Harness,
+		HarnessArgs: cloneArgs.HarnessArgs,
+		NoNetInject: cloneArgs.NoNetInject,
 	}
 
 	if RunEngineHook != nil {
@@ -205,6 +220,9 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 			Name:        cloneName,
 			Ambient:     cloneArgs.Ambient,
 			WorkDir:     cloneArgs.WorkDir,
+			Harness:     cloneArgs.Harness,
+			HarnessArgs: cloneArgs.HarnessArgs,
+			NoNetInject: cloneArgs.NoNetInject,
 		}
 		go RunEngineHook(newAgent, func(f func()) {
 			s.Mu.Lock()
@@ -343,6 +361,7 @@ func (s *Service) StreamExternalAgent(event *ExternalStreamEvent, reply *StreamE
 			Role:      "external",
 			State:     "flying",
 			ModelID:   "external",
+			Harness:   "external",
 			Verbosity: "verbose",
 		}
 		s.Agents = append(s.Agents, agent)

@@ -24,15 +24,18 @@ var rootCmd = &cobra.Command{
 }
 
 var (
-	modelFlag    string
-	templateFlag string
-	registryFlag string
-	thinkingFlag bool
-	effortFlag   string
-	nameFlag     string
-	ambientFlag  bool
-	dirFlag      string
-	countFlag    int
+	modelFlag       string
+	templateFlag    string
+	registryFlag    string
+	thinkingFlag    bool
+	effortFlag      string
+	nameFlag        string
+	ambientFlag     bool
+	dirFlag         string
+	countFlag       int
+	harnessFlag     string
+	harnessArgsFlag string
+	noNetInjectFlag bool
 )
 
 type Template struct {
@@ -68,6 +71,9 @@ var hatchCmd = &cobra.Command{
 			Name:        nameFlag,
 			Ambient:     ambientFlag,
 			WorkDir:     dirFlag,
+			Harness:     harnessFlag,
+			HarnessArgs: harnessArgsFlag,
+			NoNetInject: noNetInjectFlag,
 		}
 
 		if templateFlag != "" {
@@ -196,6 +202,9 @@ func main() {
 	hatchCmd.Flags().StringVar(&nameFlag, "name", "", "Override the agent's display name")
 	hatchCmd.Flags().BoolVar(&ambientFlag, "ambient", false, "Hatch into an ambient background mode (waits for messages without starting work immediately)")
 	hatchCmd.Flags().StringVar(&dirFlag, "dir", "", "Set the working directory for the agent (finds .owl/config.json and sets file operation root)")
+	hatchCmd.Flags().StringVar(&harnessFlag, "harness", "", "Run an external coding harness (codex|opencode|claude-code)")
+	hatchCmd.Flags().StringVar(&harnessArgsFlag, "harness-args", "", "Additional args passed to the selected harness")
+	hatchCmd.Flags().BoolVar(&noNetInjectFlag, "no-network-inject", false, "Disable Viche/Owl env injection into harness process")
 
 	cloneCmd.Flags().IntVarP(&countFlag, "count", "n", 1, "Number of clones to spawn")
 

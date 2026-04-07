@@ -678,7 +678,11 @@ func (m model) View() string {
 			ag := m.agents[idx]
 			col, icon := stateStyle(ag.State)
 			stateBadge := lipgloss.NewStyle().Foreground(Grey).Background(PaneBg).Render(fmt.Sprintf(" [%s]", ag.State))
-			header := lipgloss.NewStyle().Foreground(col).Bold(true).Background(PaneBg).Render(fmt.Sprintf("%s %s", icon, ag.Name)) + stateBadge
+			harnessBadge := ""
+			if ag.Harness != "" {
+				harnessBadge = lipgloss.NewStyle().Foreground(Blue).Background(PaneBg).Render(fmt.Sprintf(" [harness:%s]", ag.Harness))
+			}
+			header := lipgloss.NewStyle().Foreground(col).Bold(true).Background(PaneBg).Render(fmt.Sprintf("%s %s", icon, ag.Name)) + stateBadge + harnessBadge
 			spacer := lipgloss.NewStyle().Background(PaneBg).Render(
 				strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-4)))
 			headerLine := header + spacer
@@ -760,11 +764,14 @@ func (m model) View() string {
 		line1 := lipgloss.NewStyle().Foreground(col).Background(bg).Render(nameIcon) +
 			lipgloss.NewStyle().Background(bg).Render("  ") +
 			nameStyle.Render(name)
-		roleCtx := strings.ReplaceAll(fmt.Sprintf("%-6s %s", ag.Role, ag.Ctx), "\n", " ")
-		if len(roleCtx) > sidebarWidth-6 {
-			roleCtx = roleCtx[:sidebarWidth-9] + "..."
+		meta := strings.ReplaceAll(fmt.Sprintf("%-6s %s", ag.Role, ag.Ctx), "\n", " ")
+		if ag.Harness != "" {
+			meta = fmt.Sprintf("harness:%s", ag.Harness)
 		}
-		line2 := lipgloss.NewStyle().Foreground(Grey).Background(bg).Render(roleCtx)
+		if len(meta) > sidebarWidth-6 {
+			meta = meta[:sidebarWidth-9] + "..."
+		}
+		line2 := lipgloss.NewStyle().Foreground(Grey).Background(bg).Render(meta)
 		line3 := lipgloss.NewStyle().Foreground(col).Background(bg).Render("● " + ag.State)
 		content := line1 + "\n" + line2 + "\n" + line3
 
