@@ -192,6 +192,7 @@ setup_launchd_service() {
     fi
 
     sed -i '' "s|INSTALLDIR|${INSTALL_DIR}|g" "$PLIST_PATH"
+    sed -i '' "s|USER_HOME|${HOME}|g" "$PLIST_PATH"
 
     launchctl load -w "$PLIST_PATH" 2>/dev/null || {
         warn "Failed to load owld launchd service."

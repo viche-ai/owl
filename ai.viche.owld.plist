@@ -15,7 +15,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
-        <string>HOME</string>
+        <string>USER_HOME</string>
     </dict>
     <key>StandardOutPath</key>
     <string>/tmp/owld.log</string>
