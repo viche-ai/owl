@@ -131,8 +131,22 @@ func terminateHarness(cmd *exec.Cmd) error {
 	return nil
 }
 
+func parseHarnessArgs(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if strings.ContainsAny(raw, "\n\r;&|`><") {
+		return nil, fmt.Errorf("harness-args contains disallowed shell metacharacters")
+	}
+	return strings.Fields(raw), nil
+}
+
 func buildHarnessCommand(h string, args *ipc.HatchArgs) (string, []string, error) {
-	extra := strings.Fields(args.HarnessArgs)
+	extra, err := parseHarnessArgs(args.HarnessArgs)
+	if err != nil {
+		return "", nil, err
+	}
 	workDir := args.WorkDir
 	if workDir == "" {
 		workDir, _ = os.Getwd()
@@ -140,7 +154,7 @@ func buildHarnessCommand(h string, args *ipc.HatchArgs) (string, []string, error
 
 	switch h {
 	case "codex":
-		base := []string{"exec", args.Description, "--full-auto"}
+		base := []string{"exec", args.Description}
 		base = append(base, extra...)
 		return "codex", base, nil
 	case "opencode":
@@ -148,7 +162,7 @@ func buildHarnessCommand(h string, args *ipc.HatchArgs) (string, []string, error
 		base = append(base, extra...)
 		return "opencode", base, nil
 	case "claude-code", "claude":
-		base := []string{"--print", "--permission-mode", "bypassPermissions", args.Description}
+		base := []string{"--print", args.Description}
 		base = append(base, extra...)
 		return "claude", base, nil
 	default:

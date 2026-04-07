@@ -145,6 +145,9 @@ Owl comes with a set of CLI commands to manage agents, configuration, and networ
   - `--effort <level>`: Set reasoning effort (`low`, `medium`, `high`).
   - `--registry <token>`: Override the Viche registry connection for this specific agent.
   - `--dir <path>`: Set the working directory for the agent. Enables project-level context and guardrails from `.owl/project.json`, and sets the root for file operations.
+  - `--harness <name>`: Run an external coding harness instead of Owl's built-in LLM loop. Supported: `codex`, `opencode`, `claude-code`.
+  - `--harness-args "..."`: Optional extra args passed to the selected harness. For safety, shell metacharacters are rejected.
+  - `--no-network-inject`: Disable injection of Owl/Viche environment variables (`OWL_LOCAL_AGENT_ID`, `OWL_HARNESS`, and registry token when available).
 
 - **`owl clone <agent_id>`**
   Clones an existing agent, spawning a new one with identical parameters (model, prompt, configuration, working directory).
