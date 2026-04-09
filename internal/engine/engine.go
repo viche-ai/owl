@@ -13,6 +13,7 @@ import (
 	"github.com/viche-ai/owl/internal/config"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
+	"github.com/viche-ai/owl/internal/logs"
 	"github.com/viche-ai/owl/internal/tools"
 	"github.com/viche-ai/owl/internal/viche"
 )
@@ -23,7 +24,7 @@ type AgentEngine struct {
 	Mu     func(func())
 	Router *llm.Router
 
-	logFile     *os.File
+	logWriter   *logs.Writer
 	messages    []llm.Message
 	provider    llm.Provider
 	model       string
@@ -36,17 +37,20 @@ type AgentEngine struct {
 }
 
 func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
-	// Open log file
+	// Open structured log file
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".owl", "logs")
-	_ = os.MkdirAll(logDir, 0755)
 
-	// Use a temporary name for the log file until we scaffold the real name
-	tempName := sanitizeName(args.Description)
-	logPath := filepath.Join(logDir, fmt.Sprintf("agent-%s-%d.log", tempName, time.Now().Unix()))
-	if f, err := os.Create(logPath); err == nil {
-		e.logFile = f
-		defer func() { _ = f.Close() }()
+	runID := e.State.RunID
+	if runID == "" {
+		runID = logs.GenerateRunID(sanitizeName(args.Description))
+	}
+
+	var logPath string
+	if w, path, err := logs.NewWriter(logDir, runID, e.State.Name, e.State.ID, args.ModelID); err == nil {
+		e.logWriter = w
+		logPath = path
+		defer func() { _ = e.logWriter.Close() }()
 	}
 
 	e.appendLog("> Booting agent engine...\n")
@@ -498,6 +502,7 @@ func (e *AgentEngine) runWithTools() string {
 				e.Mu(func() {
 					e.State.Ctx = fmt.Sprintf("%dk / 128k", (event.Usage.TotalTokens+500)/1000)
 				})
+				e.logWriter.LogUsage(event.Usage.PromptTokens, event.Usage.CompletionTokens, e.model)
 			}
 			if event.Done {
 				break
@@ -548,7 +553,8 @@ func (e *AgentEngine) runWithTools() string {
 			case "task_update":
 				result = e.taskTools.Execute(call)
 			case "list_agents", "create_agent", "validate_agent", "explain_agent",
-				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config":
+				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config",
+				"query_logs":
 				if e.metaTools != nil {
 					result = e.metaTools.Execute(call)
 				} else {
@@ -557,6 +563,9 @@ func (e *AgentEngine) runWithTools() string {
 			default:
 				result = fmt.Sprintf("Unknown tool: %s", call.Name)
 			}
+
+			// Write a structured tool entry to the disk log.
+			e.logWriter.LogTool(tc.Name, tc.Arguments, result)
 
 			// If debug verbosity is enabled, print full result, else print truncated
 			e.logDebug(fmt.Sprintf("> Result: %s\n", result))
@@ -589,39 +598,47 @@ func sanitizeName(name string) string {
 	return s
 }
 
-// appendLog writes to both disk and TUI state
+// appendLog writes to both structured disk log and TUI state.
 func (e *AgentEngine) appendLog(text string) {
 	e.Mu(func() { e.State.Logs += text })
-	if e.logFile != nil {
-		_, _ = e.logFile.WriteString(text)
-	}
+	e.logWriter.Log(inferLevel(text), text)
 }
 
-// logVerbose logs based on verbosity level
+// logVerbose always writes to disk; only updates TUI state at verbose/debug verbosity.
 func (e *AgentEngine) logVerbose(text string) {
 	var v string
 	e.Mu(func() { v = e.State.Verbosity })
 
-	if e.logFile != nil {
-		_, _ = e.logFile.WriteString(text)
-	}
+	e.logWriter.Log("debug", text)
 
 	if v == "verbose" || v == "debug" {
 		e.Mu(func() { e.State.Logs += text })
 	}
 }
 
-// logDebug logs based on verbosity level
+// logDebug always writes to disk; only updates TUI state at debug verbosity.
 func (e *AgentEngine) logDebug(text string) {
 	var v string
 	e.Mu(func() { v = e.State.Verbosity })
 
-	if e.logFile != nil {
-		_, _ = e.logFile.WriteString(text)
-	}
+	e.logWriter.Log("debug", text)
 
 	if v == "debug" {
 		e.Mu(func() { e.State.Logs += text })
+	}
+}
+
+// inferLevel derives a structured log level from message content prefixes.
+func inferLevel(text string) string {
+	switch {
+	case strings.Contains(text, "[Error]"):
+		return "error"
+	case strings.Contains(text, "[Warning]"):
+		return "warn"
+	case strings.Contains(text, "[Thinking]"):
+		return "thinking"
+	default:
+		return "info"
 	}
 }
 

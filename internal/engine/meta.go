@@ -30,6 +30,7 @@ Tools available to you:
 - apply_edit: write the confirmed change, bump patch version, append CHANGELOG
 - read_agent_file: read any file in an agent definition directory
 - read_project_config: read the project context and guardrails
+- query_logs: query structured agent logs to detect errors and usage patterns
 - shell_exec, file_read, file_write, file_edit: general file operations
 
 WORKING PRINCIPLES:
@@ -180,6 +181,32 @@ func MetaAgentToolDefs() []tools.ToolDefinition {
 				"type":       "object",
 				"properties": map[string]interface{}{},
 				"required":   []string{},
+			},
+		},
+		{
+			Name:        "query_logs",
+			Description: "Query structured agent logs to detect recurring errors, tool failures, and usage patterns. Use this to suggest prompt improvements based on failure analysis.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"agent_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by agent name (empty for all agents)",
+					},
+					"level": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by level: info, warn, error, debug, tool, thinking",
+					},
+					"since": map[string]interface{}{
+						"type":        "string",
+						"description": "Time window as a Go duration (e.g. '1h', '30m', '24h')",
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of entries to return (default: all)",
+					},
+				},
+				"required": []string{},
 			},
 		},
 	}

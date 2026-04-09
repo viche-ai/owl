@@ -6,10 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/viche-ai/owl/internal/logs"
 )
 
 type AgentState struct {
 	ID        string
+	RunID     string // unique run ID, set at hatch time, used for log file naming
 	Name      string
 	Role      string
 	Ctx       string
@@ -206,8 +209,11 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 		name = args.Description
 	}
 
+	runID := logs.GenerateRunID(name)
+
 	newAgent := &AgentState{
 		ID:        fmt.Sprintf("%d", idx+1),
+		RunID:     runID,
 		Name:      name,
 		Role:      "auto",
 		Ctx:       "0 / 128k",
@@ -279,8 +285,11 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 		cloneName = cloneName + "-clone"
 	}
 
+	cloneRunID := logs.GenerateRunID(cloneName)
+
 	newAgent := &AgentState{
 		ID:        fmt.Sprintf("%d", idx+1),
+		RunID:     cloneRunID,
 		Name:      cloneName,
 		Role:      "auto",
 		Ctx:       "0 / 128k",

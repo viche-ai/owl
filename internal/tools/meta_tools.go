@@ -9,6 +9,7 @@ import (
 
 	"github.com/viche-ai/owl/internal/agents"
 	"github.com/viche-ai/owl/internal/config"
+	"github.com/viche-ai/owl/internal/logs"
 )
 
 // MetaTools implements the Owl meta-agent tool set for managing agent definitions.
@@ -35,6 +36,8 @@ func (t *MetaTools) Execute(call ToolCall) string {
 		return t.readAgentFile(call)
 	case "read_project_config":
 		return t.readProjectConfig(call)
+	case "query_logs":
+		return t.queryLogs(call)
 	default:
 		return fmt.Sprintf("Unknown meta tool: %s", call.Name)
 	}
@@ -252,6 +255,56 @@ func (t *MetaTools) readProjectConfig(call ToolCall) string {
 		parts = append(parts, "(no context or guardrails configured)")
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (t *MetaTools) queryLogs(call ToolCall) string {
+	agentName, _ := call.Args["agent_name"].(string)
+	level, _ := call.Args["level"].(string)
+	sinceStr, _ := call.Args["since"].(string)
+	limitFloat, _ := call.Args["limit"].(float64)
+	limit := int(limitFloat)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Sprintf("Error: could not determine home directory: %v", err)
+	}
+	reader := &logs.Reader{LogDir: filepath.Join(home, ".owl", "logs")}
+
+	opts := logs.QueryOpts{
+		AgentName: agentName,
+		Level:     level,
+		Limit:     limit,
+	}
+	if sinceStr != "" {
+		d, err := time.ParseDuration(sinceStr)
+		if err != nil {
+			return fmt.Sprintf("Error: invalid 'since' duration %q (use Go duration like '1h', '30m'): %v", sinceStr, err)
+		}
+		opts.Since = time.Now().Add(-d)
+	}
+
+	entries, err := reader.Query(opts)
+	if err != nil {
+		return fmt.Sprintf("Error querying logs: %v", err)
+	}
+	if len(entries) == 0 {
+		return "No log entries found matching the criteria."
+	}
+
+	var lines []string
+	for _, e := range entries {
+		line := fmt.Sprintf("[%s] [%s] [%s] %s",
+			e.Timestamp.Format("2006-01-02 15:04:05"),
+			e.AgentName,
+			e.Level,
+			strings.TrimRight(e.Message, "\n"),
+		)
+		if e.ToolName != "" {
+			line += fmt.Sprintf(" (tool: %s)", e.ToolName)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // resolveNewAgentDir returns the target directory path for a new agent definition.
