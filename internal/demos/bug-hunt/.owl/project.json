@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "context": "A Python task tracker module with three planted bugs. The scout, fixer, and verifier agents coordinate over the Viche network to find, patch, and verify the fixes.",
+  "guardrails": [
+    "Do not modify SPEC.md — it is the source of truth",
+    "Do not attempt to fix bugs directly — use the agent pipeline"
+  ]
+}

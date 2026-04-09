@@ -1,0 +1,6 @@
+name: scout
+version: "1.0.0"
+description: Analyzes code against specifications to find bugs
+capabilities:
+  - analysis
+  - triage

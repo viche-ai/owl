@@ -1,0 +1,6 @@
+name: fixer
+version: "1.0.0"
+description: Patches bugs identified in triage reports
+capabilities:
+  - coding
+  - debugging
