@@ -1,13 +1,18 @@
 package ipc
 
 import (
+	"bufio"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/viche-ai/owl/internal/logs"
+	"github.com/viche-ai/owl/internal/runs"
 )
 
 type AgentState struct {
@@ -36,6 +41,12 @@ type Service struct {
 
 	// CloneArgs stores the original hatch parameters for each agent (used for cloning)
 	CloneArgs map[int]*CloneArgs
+
+	// RunStore persists run metadata across daemon restarts
+	RunStore *runs.Store
+
+	// CancelFuncs allows force-stopping an in-progress LLM call by RunID
+	CancelFuncs map[string]context.CancelFunc
 }
 
 type InboundMessage struct {
@@ -44,10 +55,13 @@ type InboundMessage struct {
 }
 
 func NewService() *Service {
+	store, _ := runs.NewStore() // best-effort; nil store is handled gracefully
 	return &Service{
-		Agents:     []*AgentState{},
-		InboxChans: make(map[int]chan InboundMessage),
-		CloneArgs:  make(map[int]*CloneArgs),
+		Agents:      []*AgentState{},
+		InboxChans:  make(map[int]chan InboundMessage),
+		CloneArgs:   make(map[int]*CloneArgs),
+		RunStore:    store,
+		CancelFuncs: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -109,7 +123,9 @@ type CloneResponse struct {
 	NewID   string
 }
 
-var RunEngineHook func(state *AgentState, mu func(func()), args *HatchArgs, inbox chan InboundMessage)
+// RunEngineHook is set by owld to wire the engine into the RPC service.
+// It receives a cancellable context so force-stop can abort in-flight LLM calls.
+var RunEngineHook func(ctx context.Context, state *AgentState, mu func(func()), args *HatchArgs, inbox chan InboundMessage)
 
 // DryRunHatch resolves the agent definition and prompt stack without spawning an agent.
 func (s *Service) DryRunHatch(args *HatchArgs, reply *DryRunReply) error {
@@ -247,8 +263,29 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 		NoNetInject: args.NoNetInject,
 	}
 
+	// Persist initial RunRecord
+	if s.RunStore != nil {
+		workDir := args.WorkDir
+		if workDir == "" {
+			workDir, _ = os.Getwd()
+		}
+		rec := &runs.RunRecord{
+			RunID:     runID,
+			AgentName: name,
+			AgentDef:  args.Agent,
+			ModelID:   args.ModelID,
+			Harness:   args.Harness,
+			State:     "hatching",
+			StartTime: time.Now(),
+			WorkDir:   workDir,
+		}
+		_ = s.RunStore.Save(rec) // best-effort
+	}
+
 	if RunEngineHook != nil {
-		go RunEngineHook(newAgent, func(f func()) {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.CancelFuncs[runID] = cancel
+		go RunEngineHook(ctx, newAgent, func(f func()) {
 			s.Mu.Lock()
 			defer s.Mu.Unlock()
 			f()
@@ -321,6 +358,25 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 		NoNetInject: cloneArgs.NoNetInject,
 	}
 
+	// Persist initial RunRecord for clone
+	if s.RunStore != nil {
+		workDir := cloneArgs.WorkDir
+		if workDir == "" {
+			workDir, _ = os.Getwd()
+		}
+		rec := &runs.RunRecord{
+			RunID:     cloneRunID,
+			AgentName: cloneName,
+			AgentDef:  "",
+			ModelID:   cloneArgs.ModelID,
+			Harness:   cloneArgs.Harness,
+			State:     "hatching",
+			StartTime: time.Now(),
+			WorkDir:   workDir,
+		}
+		_ = s.RunStore.Save(rec) // best-effort
+	}
+
 	if RunEngineHook != nil {
 		hatchArgs := &HatchArgs{
 			Description: cloneArgs.Description,
@@ -335,7 +391,9 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 			HarnessArgs: cloneArgs.HarnessArgs,
 			NoNetInject: cloneArgs.NoNetInject,
 		}
-		go RunEngineHook(newAgent, func(f func()) {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.CancelFuncs[cloneRunID] = cancel
+		go RunEngineHook(ctx, newAgent, func(f func()) {
 			s.Mu.Lock()
 			defer s.Mu.Unlock()
 			f()
@@ -503,6 +561,254 @@ func (s *Service) ListAgents(args *ListArgs, reply *ListReply) error {
 	return nil
 }
 
+// ── Run Controls ─────────────────────────────────────────────────────────────
+
+// StopArgs identifies a run to stop by RunID. Force=true does an immediate kill.
+type StopArgs struct {
+	RunID string
+	Force bool
+}
+
+type StopReply struct {
+	Success bool
+	Message string
+}
+
+// StopAgent gracefully (or forcefully) stops a running agent without removing it.
+// The agent remains in the Agents slice for inspection; its state becomes "stopped".
+func (s *Service) StopAgent(args *StopArgs, reply *StopReply) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	idx := s.indexByRunID(args.RunID)
+	if idx < 0 {
+		return fmt.Errorf("run %q not found in active agents", args.RunID)
+	}
+
+	agent := s.Agents[idx]
+	name := agent.Name
+
+	exitReason := "user-stop"
+	if args.Force {
+		exitReason = "force-stop"
+	}
+
+	// Cancel the in-flight LLM context (force-stop or graceful — both benefit)
+	if cancel, ok := s.CancelFuncs[args.RunID]; ok {
+		cancel()
+		delete(s.CancelFuncs, args.RunID)
+	}
+
+	// Close inbox channel — this exits the agent's conversation loop
+	if ch, ok := s.InboxChans[idx]; ok {
+		close(ch)
+		delete(s.InboxChans, idx)
+	}
+
+	agent.State = "stopped"
+
+	// Update persisted RunRecord
+	if s.RunStore != nil {
+		if rec, err := s.RunStore.Load(args.RunID); err == nil {
+			rec.State = "stopped"
+			rec.ExitReason = exitReason
+			now := time.Now()
+			rec.EndTime = &now
+			_ = s.RunStore.Save(rec)
+		}
+	}
+
+	s.appendAudit(args.RunID, "stop", args.Force)
+
+	reply.Success = true
+	reply.Message = fmt.Sprintf("✓ Stopped: %s (%s)", name, args.RunID)
+	return nil
+}
+
+// RemoveArgs identifies a run to remove by RunID.
+// Archive=true (default) keeps the record on disk with state="archived".
+// Archive=false + Force=true hard-deletes the RunRecord and log files.
+type RemoveArgs struct {
+	RunID   string
+	Archive bool // true = archive; false + Force = hard delete
+	Force   bool // required for hard delete
+}
+
+type RemoveReply struct {
+	Success bool
+	Message string
+}
+
+// RemoveAgent removes an agent from the active slice and optionally archives or deletes its record.
+func (s *Service) RemoveAgent(args *RemoveArgs, reply *RemoveReply) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	idx := s.indexByRunID(args.RunID)
+	if idx >= 0 {
+		// Still active — stop it first (graceful)
+		if cancel, ok := s.CancelFuncs[args.RunID]; ok {
+			cancel()
+			delete(s.CancelFuncs, args.RunID)
+		}
+		if ch, ok := s.InboxChans[idx]; ok {
+			close(ch)
+			delete(s.InboxChans, idx)
+		}
+		// Remove from active slice
+		s.Agents = append(s.Agents[:idx], s.Agents[idx+1:]...)
+		s.rebuildMaps(idx)
+	}
+
+	if s.RunStore != nil {
+		if args.Archive || !args.Force {
+			// Default: archive
+			_ = s.RunStore.Archive(args.RunID)
+		} else {
+			// Hard delete — requires explicit Force + !Archive
+			_ = s.RunStore.Delete(args.RunID)
+		}
+	}
+
+	action := "archive"
+	if !args.Archive && args.Force {
+		action = "delete"
+	}
+	s.appendAudit(args.RunID, action, args.Force)
+
+	reply.Success = true
+	reply.Message = fmt.Sprintf("✓ Removed: %s", args.RunID)
+	return nil
+}
+
+// InspectArgs identifies a run to inspect by RunID.
+type InspectArgs struct {
+	RunID    string
+	FullLogs bool // if true, include last 100 log lines
+}
+
+type InspectReply struct {
+	Found      bool
+	RunRecord  runs.RunRecord
+	AgentState *AgentState // non-nil if the agent is still active in memory
+	RecentLogs string      // recent log entries from the JSONL file
+}
+
+// InspectAgent returns full metadata and recent logs for a run (active or archived).
+func (s *Service) InspectAgent(args *InspectArgs, reply *InspectReply) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	// Check active agents first
+	idx := s.indexByRunID(args.RunID)
+	if idx >= 0 {
+		ag := s.Agents[idx]
+		reply.Found = true
+		reply.AgentState = ag
+
+		if s.RunStore != nil {
+			if rec, err := s.RunStore.Load(args.RunID); err == nil {
+				reply.RunRecord = *rec
+			} else {
+				// Synthesise a record from in-memory state
+				reply.RunRecord = runs.RunRecord{
+					RunID:     ag.RunID,
+					AgentName: ag.Name,
+					ModelID:   ag.ModelID,
+					Harness:   ag.Harness,
+					State:     ag.State,
+					StartTime: time.Now(),
+				}
+			}
+		}
+	} else if s.RunStore != nil {
+		// Try archived / stopped records
+		if rec, err := s.RunStore.Load(args.RunID); err == nil {
+			reply.Found = true
+			reply.RunRecord = *rec
+		}
+	}
+
+	if !reply.Found {
+		return fmt.Errorf("run %q not found", args.RunID)
+	}
+
+	// Read recent log entries from disk
+	reply.RecentLogs = s.readRecentLogs(args.RunID, args.FullLogs)
+	return nil
+}
+
+// ListRunsArgs controls what the ListRuns RPC returns.
+type ListRunsArgs struct {
+	All         bool   // include archived runs (default: active only)
+	StateFilter string // filter by state ("" = no filter)
+}
+
+type ListRunsReply struct {
+	Records []runs.RunRecord
+}
+
+// ListRuns returns run records. Active agents are always included; archived runs
+// are included when All=true or when AllRuns flag is set.
+func (s *Service) ListRuns(args *ListRunsArgs, reply *ListRunsReply) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	// Build active run IDs set
+	activeRunIDs := make(map[string]bool)
+	for _, ag := range s.Agents {
+		activeRunIDs[ag.RunID] = true
+	}
+
+	// Synthesise records for active agents that may not be persisted yet
+	var activeRecords []runs.RunRecord
+	for _, ag := range s.Agents {
+		var rec runs.RunRecord
+		if s.RunStore != nil {
+			if r, err := s.RunStore.Load(ag.RunID); err == nil {
+				r.State = ag.State // reflect in-memory state
+				rec = *r
+			} else {
+				rec = runs.RunRecord{
+					RunID:     ag.RunID,
+					AgentName: ag.Name,
+					ModelID:   ag.ModelID,
+					Harness:   ag.Harness,
+					State:     ag.State,
+					StartTime: time.Now(),
+				}
+			}
+		}
+		if args.StateFilter == "" || rec.State == args.StateFilter {
+			activeRecords = append(activeRecords, rec)
+		}
+	}
+
+	if !args.All {
+		reply.Records = activeRecords
+		return nil
+	}
+
+	// Include archived / stopped records from disk
+	var allRecords []runs.RunRecord
+	if s.RunStore != nil {
+		if stored, err := s.RunStore.List(); err == nil {
+			for _, r := range stored {
+				if activeRunIDs[r.RunID] {
+					continue // already added from in-memory state above
+				}
+				if args.StateFilter == "" || r.State == args.StateFilter {
+					allRecords = append(allRecords, r)
+				}
+			}
+		}
+	}
+	reply.Records = append(activeRecords, allRecords...)
+	return nil
+}
+
+// ── Deprecated: Kill ─────────────────────────────────────────────────────────
+
 type KillArgs struct {
 	AgentIndex int
 }
@@ -512,48 +818,131 @@ type KillReply struct {
 	Message string
 }
 
+// Kill is deprecated — it calls StopAgent + RemoveAgent internally.
+// Kept for backwards compatibility with older TUI and CLI consumers.
 func (s *Service) Kill(args *KillArgs, reply *KillReply) error {
 	s.Mu.Lock()
-	defer s.Mu.Unlock()
-
 	if args.AgentIndex < 0 || args.AgentIndex >= len(s.Agents) {
+		s.Mu.Unlock()
 		return fmt.Errorf("agent index %d out of range", args.AgentIndex)
 	}
-
+	runID := s.Agents[args.AgentIndex].RunID
 	name := s.Agents[args.AgentIndex].Name
+	s.Mu.Unlock()
 
-	// Close the inbox channel so the agent goroutine exits its range loop
-	if ch, ok := s.InboxChans[args.AgentIndex]; ok {
-		close(ch)
-		delete(s.InboxChans, args.AgentIndex)
-	}
+	// Stop (graceful)
+	var stopReply StopReply
+	_ = s.StopAgent(&StopArgs{RunID: runID, Force: false}, &stopReply)
 
-	// Remove agent from slice
-	s.Agents = append(s.Agents[:args.AgentIndex], s.Agents[args.AgentIndex+1:]...)
-
-	// Rebuild inbox channel map with corrected indices
-	newInboxChans := make(map[int]chan InboundMessage)
-	for i, ch := range s.InboxChans {
-		if i > args.AgentIndex {
-			newInboxChans[i-1] = ch
-		} else {
-			newInboxChans[i] = ch
-		}
-	}
-	s.InboxChans = newInboxChans
-
-	// Rebuild clone args map with corrected indices
-	newCloneArgs := make(map[int]*CloneArgs)
-	for i, ca := range s.CloneArgs {
-		if i > args.AgentIndex {
-			newCloneArgs[i-1] = ca
-		} else {
-			newCloneArgs[i] = ca
-		}
-	}
-	s.CloneArgs = newCloneArgs
+	// Remove (archive by default)
+	var removeReply RemoveReply
+	_ = s.RemoveAgent(&RemoveArgs{RunID: runID, Archive: true}, &removeReply)
 
 	reply.Success = true
 	reply.Message = "✓ Killed: " + name
 	return nil
+}
+
+// ── Internal helpers ─────────────────────────────────────────────────────────
+
+// indexByRunID returns the index in s.Agents for the given RunID, or -1.
+// Caller must hold s.Mu.
+func (s *Service) indexByRunID(runID string) int {
+	for i, ag := range s.Agents {
+		if ag.RunID == runID {
+			return i
+		}
+	}
+	return -1
+}
+
+// rebuildMaps corrects InboxChans and CloneArgs indices after removing index removedIdx.
+// Caller must hold s.Mu.
+func (s *Service) rebuildMaps(removedIdx int) {
+	newInbox := make(map[int]chan InboundMessage)
+	for i, ch := range s.InboxChans {
+		if i > removedIdx {
+			newInbox[i-1] = ch
+		} else {
+			newInbox[i] = ch
+		}
+	}
+	s.InboxChans = newInbox
+
+	newClone := make(map[int]*CloneArgs)
+	for i, ca := range s.CloneArgs {
+		if i > removedIdx {
+			newClone[i-1] = ca
+		} else {
+			newClone[i] = ca
+		}
+	}
+	s.CloneArgs = newClone
+}
+
+// appendAudit writes a single-line audit entry to ~/.owl/audit.jsonl.
+func (s *Service) appendAudit(runID, action string, force bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	entry := map[string]interface{}{
+		"ts":     time.Now().UTC().Format(time.RFC3339),
+		"action": action,
+		"run_id": runID,
+		"force":  force,
+	}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	auditPath := filepath.Join(home, ".owl", "audit.jsonl")
+	f, err := os.OpenFile(auditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = fmt.Fprintf(f, "%s\n", b)
+}
+
+// readRecentLogs returns recent log lines from the agent's JSONL log file.
+func (s *Service) readRecentLogs(runID string, full bool) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	logPath := filepath.Join(home, ".owl", "logs", runID+".jsonl")
+	f, err := os.Open(logPath)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+
+	limit := 20
+	if full {
+		limit = 100
+	}
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if len(lines) > limit {
+		lines = lines[len(lines)-limit:]
+	}
+
+	var out strings.Builder
+	for _, line := range lines {
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err == nil {
+			ts, _ := entry["ts"].(string)
+			level, _ := entry["level"].(string)
+			msg, _ := entry["message"].(string)
+			_, _ = fmt.Fprintf(&out, "[%s] %s: %s\n", ts, level, msg)
+		} else {
+			out.WriteString(line + "\n")
+		}
+	}
+	return out.String()
 }

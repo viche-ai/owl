@@ -14,17 +14,20 @@ import (
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
 	"github.com/viche-ai/owl/internal/logs"
+	"github.com/viche-ai/owl/internal/runs"
 	"github.com/viche-ai/owl/internal/tools"
 	"github.com/viche-ai/owl/internal/viche"
 )
 
 type AgentEngine struct {
-	State  *ipc.AgentState
-	Cfg    *config.Config
-	Mu     func(func())
-	Router *llm.Router
+	State    *ipc.AgentState
+	Cfg      *config.Config
+	Mu       func(func())
+	Router   *llm.Router
+	RunStore *runs.Store // optional; persists state transitions to disk
 
 	logWriter   *logs.Writer
+	runCtx      context.Context // cancellable context for the current run
 	messages    []llm.Message
 	provider    llm.Provider
 	model       string
@@ -36,7 +39,9 @@ type AgentEngine struct {
 	toolDefs    []llm.ToolDef
 }
 
-func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+	e.runCtx = ctx
+
 	// Open structured log file
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".owl", "logs")
@@ -53,12 +58,21 @@ func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 		defer func() { _ = e.logWriter.Close() }()
 	}
 
+	// Update persisted RunRecord with resolved log path
+	if e.RunStore != nil {
+		if rec, err := e.RunStore.Load(runID); err == nil {
+			rec.LogPath = logPath
+			rec.State = "hatching"
+			_ = e.RunStore.Save(rec)
+		}
+	}
+
 	e.appendLog("> Booting agent engine...\n")
 	e.appendLog(fmt.Sprintf("> Log: %s\n", logPath))
 	time.Sleep(200 * time.Millisecond)
 
 	if args.Harness != "" {
-		e.runHarness(args, inbox)
+		e.runHarness(ctx, args, inbox)
 		return
 	}
 
@@ -393,6 +407,21 @@ Your initial plan was:
 	}
 	e.appendLog("\n> Agent stopped.\n")
 	e.setState("stopped")
+
+	// Persist final state
+	if e.RunStore != nil {
+		exitReason := "completed"
+		if ctx.Err() != nil {
+			exitReason = "force-stop"
+		}
+		if rec, err := e.RunStore.Load(runID); err == nil {
+			rec.State = "stopped"
+			rec.ExitReason = exitReason
+			now := time.Now()
+			rec.EndTime = &now
+			_ = e.RunStore.Save(rec)
+		}
+	}
 }
 
 // UpdateTaskStatus implements tools.TaskUpdater
@@ -443,7 +472,10 @@ func (e *AgentEngine) processMessage(content string) {
 // runWithTools streams LLM output, executing any tool calls in a loop until the model is done
 func (e *AgentEngine) runWithTools() string {
 	for {
-		ctx := context.Background()
+		ctx := e.runCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		var stream <-chan llm.StreamEvent
 		var err error
 
@@ -472,6 +504,10 @@ func (e *AgentEngine) runWithTools() string {
 		}
 
 		if err != nil {
+			if ctx.Err() != nil {
+				e.appendLog("\n> Agent force-stopped.\n")
+				return ""
+			}
 			e.appendLog(fmt.Sprintf("[Error] LLM failed: %v\n", err))
 			e.setState("idle")
 			return ""

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -45,14 +46,15 @@ func main() {
 
 	daemon := ipc.NewService()
 
-	ipc.RunEngineHook = func(state *ipc.AgentState, mu func(func()), args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+	ipc.RunEngineHook = func(ctx context.Context, state *ipc.AgentState, mu func(func()), args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 		eng := &engine.AgentEngine{
-			State:  state,
-			Cfg:    cfg,
-			Mu:     mu,
-			Router: router,
+			State:    state,
+			Cfg:      cfg,
+			Mu:       mu,
+			Router:   router,
+			RunStore: daemon.RunStore,
 		}
-		eng.Run(args, inbox)
+		eng.Run(ctx, args, inbox)
 	}
 
 	// Auto-hatch the Owl meta-agent at index 0. It serves as the primary

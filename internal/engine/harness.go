@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 	"github.com/viche-ai/owl/internal/ipc"
 )
 
-func (e *AgentEngine) runHarness(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 	name := strings.ToLower(strings.TrimSpace(args.Harness))
 	if name == "" {
 		e.appendLog("[Error] Harness name is required.\n")
@@ -96,6 +97,13 @@ func (e *AgentEngine) runHarness(args *ipc.HatchArgs, inbox chan ipc.InboundMess
 
 	for {
 		select {
+		case <-ctx.Done():
+			_ = terminateHarness(cmd)
+			<-done
+			wg.Wait()
+			e.appendLog("\n> Agent force-stopped.\n")
+			e.setState("stopped")
+			return
 		case err := <-done:
 			wg.Wait()
 			if err != nil {

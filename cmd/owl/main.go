@@ -323,6 +323,7 @@ func main() {
 	rootCmd.AddCommand(hatchCmd)
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(migrateCmd)
+	rootCmd.AddCommand(runsCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

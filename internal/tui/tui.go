@@ -109,6 +109,34 @@ func sendClone(agentIndex int) (string, error) {
 	return reply.Message, nil
 }
 
+func sendStop(runID string, force bool) (string, error) {
+	c, err := rpc.Dial("unix", "/tmp/owld.sock")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = c.Close() }()
+	var reply ipc.StopReply
+	err = c.Call("Daemon.StopAgent", &ipc.StopArgs{RunID: runID, Force: force}, &reply)
+	if err != nil {
+		return "", err
+	}
+	return reply.Message, nil
+}
+
+func sendRemove(runID string, archive bool) (string, error) {
+	c, err := rpc.Dial("unix", "/tmp/owld.sock")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = c.Close() }()
+	var reply ipc.RemoveReply
+	err = c.Call("Daemon.RemoveAgent", &ipc.RemoveArgs{RunID: runID, Archive: archive, Force: !archive}, &reply)
+	if err != nil {
+		return "", err
+	}
+	return reply.Message, nil
+}
+
 //lint:ignore U1000 unused
 func sendAgentConfig(agentIndex int, config ipc.SetConfigArgs) (string, error) {
 	c, err := rpc.Dial("unix", "/tmp/owld.sock")
@@ -419,6 +447,11 @@ func (m *model) handleCommand(cmdStr string) {
 		m.consoleHistory = append(m.consoleHistory, "  viche set-default <token>  Set default registry")
 		m.consoleHistory = append(m.consoleHistory, "  viche status               Show registries")
 		m.consoleHistory = append(m.consoleHistory, "  clear                      Clear console")
+		m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Yellow).Render("Agent tab shortcuts:"))
+		m.consoleHistory = append(m.consoleHistory, "  c   Clone selected agent")
+		m.consoleHistory = append(m.consoleHistory, "  s   Graceful stop")
+		m.consoleHistory = append(m.consoleHistory, "  S   Force stop (immediate)")
+		m.consoleHistory = append(m.consoleHistory, "  x   Remove/archive agent")
 
 	case "clear":
 		m.consoleHistory = []string{}
@@ -551,6 +584,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+
+		case "s":
+			// Graceful stop of selected agent
+			if m.activeTab > 0 {
+				agentIndex := m.activeAgentIndex()
+				if agentIndex >= 0 && agentIndex < len(m.agents) {
+					runID := m.agents[agentIndex].RunID
+					if runID != "" {
+						msg, err := sendStop(runID, false)
+						if err != nil {
+							m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
+						} else {
+							m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Yellow).Render(msg))
+						}
+					}
+				}
+			}
+			return m, nil
+
+		case "S":
+			// Force-stop of selected agent (shift+s)
+			if m.activeTab > 0 {
+				agentIndex := m.activeAgentIndex()
+				if agentIndex >= 0 && agentIndex < len(m.agents) {
+					runID := m.agents[agentIndex].RunID
+					if runID != "" && m.agents[agentIndex].Name != "owl" {
+						msg, err := sendStop(runID, true)
+						if err != nil {
+							m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
+						} else {
+							m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render(msg))
+						}
+					}
+				}
+			}
+			return m, nil
+
+		case "x":
+			// Remove/archive selected agent
+			if m.activeTab > 0 {
+				agentIndex := m.activeAgentIndex()
+				if agentIndex >= 0 && agentIndex < len(m.agents) {
+					ag := m.agents[agentIndex]
+					if ag.RunID != "" && ag.Name != "owl" {
+						msg, err := sendRemove(ag.RunID, true)
+						if err != nil {
+							m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
+						} else {
+							m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Grey).Render(msg))
+							// Return to console tab
+							m.activeTab = 0
+							m.textInput.Focus()
+							m.agentInput.Blur()
+						}
+					}
+				}
+			}
+			return m, nil
 		case "enter":
 			if m.activeTab == 0 {
 				val := strings.TrimSpace(m.textInput.Value())
@@ -664,6 +755,12 @@ func stateStyle(state string) (lipgloss.Color, string) {
 		return Blue, "○"
 	case "hatching":
 		return Purple, "🥚"
+	case "stopped":
+		return Grey, "■"
+	case "archived":
+		return Grey, "□"
+	case "error":
+		return Red, "✗"
 	default:
 		return Grey, "○"
 	}
