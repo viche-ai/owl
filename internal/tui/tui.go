@@ -188,9 +188,43 @@ type model struct {
 	lastLogLen     map[string]int
 }
 
+// isMetaPresent returns true when the Owl meta-agent occupies agents[0].
+func (m *model) isMetaPresent() bool {
+	return len(m.agents) > 0 && m.agents[0].Name == "owl"
+}
+
+// activeAgentIndex maps the current activeTab to the correct index in m.agents.
+// When the meta-agent is present: Tab 0 → agents[0], Tab 1 → agents[1], etc.
+// Without meta-agent (legacy): Tab 1 → agents[0], Tab 2 → agents[1], etc.
+func (m *model) activeAgentIndex() int {
+	if m.isMetaPresent() {
+		return m.activeTab
+	}
+	return m.activeTab - 1
+}
+
+// maxTab returns the highest valid tab index.
+func (m *model) maxTab() int {
+	if m.isMetaPresent() {
+		return len(m.agents) - 1
+	}
+	return len(m.agents)
+}
+
+// isConsoleShortcut returns true if val starts with a recognized console shortcut command.
+// Shortcuts still work at Tab 0 even when the meta-agent is present.
+func isConsoleShortcut(val string) bool {
+	parts := strings.SplitN(val, " ", 2)
+	switch parts[0] {
+	case "hatch", "kill", "clone", "viche", "help", "clear":
+		return true
+	}
+	return false
+}
+
 func initialModel() model {
 	ti := textinput.New()
-	ti.Placeholder = "Run 'hatch <description>' or 'help'"
+	ti.Placeholder = "Talk to Owl, or use 'hatch <desc>' to spawn an agent"
 	ti.Focus()
 	ti.CharLimit = 200
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(Green).Bold(true)
@@ -261,16 +295,26 @@ func (m *model) handleCommand(cmdStr string) {
 			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Agent not found: "+arg))
 			return
 		}
+		// Protect the meta-agent from being killed via the shortcut
+		if agentIndex == 0 && m.isMetaPresent() {
+			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Cannot kill the meta-agent (owl)."))
+			return
+		}
 		msg, err := sendKill(agentIndex)
 		if err != nil {
 			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
 		} else {
 			m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Green).Render(msg))
-			if m.activeTab == agentIndex+1 {
+			// Compute the tab index for the killed agent
+			killedTab := agentIndex + 1
+			if m.isMetaPresent() {
+				killedTab = agentIndex
+			}
+			if m.activeTab == killedTab {
 				m.activeTab = 0
 				m.textInput.Focus()
 				m.agentInput.Blur()
-			} else if m.activeTab > agentIndex+1 {
+			} else if m.activeTab > killedTab {
 				m.activeTab--
 			}
 		}
@@ -387,11 +431,27 @@ func (m *model) handleCommand(cmdStr string) {
 // refreshViewport updates the viewport content, dimensions, and scroll position.
 // Must be called from Update() (not View()) so changes persist on the real model.
 func (m *model) refreshViewport() {
-	if m.width == 0 || m.activeTab <= 0 || m.activeTab-1 >= len(m.agents) {
+	if m.width == 0 {
 		return
 	}
 
-	ag := m.agents[m.activeTab-1]
+	// Determine which agent's logs to display.
+	// With meta-agent: Tab 0 → agents[0], Tab 1 → agents[1], …
+	// Without meta-agent: Tab 0 has no agent (console history), Tab 1 → agents[0], …
+	var agIdx int
+	if m.activeTab == 0 {
+		if !m.isMetaPresent() {
+			return // console history view, no viewport needed
+		}
+		agIdx = 0
+	} else {
+		agIdx = m.activeAgentIndex()
+		if agIdx < 0 || agIdx >= len(m.agents) {
+			return
+		}
+	}
+
+	ag := m.agents[agIdx]
 	sidebarWidth := 40
 	mainWidth := m.width - sidebarWidth
 	contentHeight := m.height - 8
@@ -451,7 +511,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "tab":
-			if m.activeTab < len(m.agents) {
+			if m.activeTab < m.maxTab() {
 				m.activeTab++
 			} else {
 				m.activeTab = 0
@@ -469,7 +529,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activeTab > 0 {
 				m.activeTab--
 			} else {
-				m.activeTab = len(m.agents)
+				m.activeTab = m.maxTab()
 			}
 			if m.activeTab == 0 {
 				m.textInput.Focus()
@@ -482,7 +542,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "c":
 			if m.activeTab > 0 {
-				agentIndex := m.activeTab - 1
+				agentIndex := m.activeAgentIndex()
 				msg, err := sendClone(agentIndex)
 				if err != nil {
 					m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Red).Render("Error: "+err.Error()))
@@ -496,14 +556,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				val := strings.TrimSpace(m.textInput.Value())
 				if val != "" {
 					m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Grey).Render("❯ ")+val)
-					m.handleCommand(val)
+					// When the meta-agent is present: shortcuts still work locally;
+					// everything else is forwarded to the meta-agent's inbox.
+					if m.isMetaPresent() && !isConsoleShortcut(val) {
+						sendUserMessage(0, val)
+					} else {
+						m.handleCommand(val)
+					}
 					m.textInput.SetValue("")
 				}
 			} else {
 				val := strings.TrimSpace(m.agentInput.Value())
 				if val != "" {
 					m.agentInput.SetValue("")
-					sendUserMessage(m.activeTab-1, val)
+					sendUserMessage(m.activeAgentIndex(), val)
 				}
 			}
 			return m, nil
@@ -564,8 +630,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.daemonErr = nil
 			m.agents = agents
-			if m.activeTab > len(m.agents) {
-				m.activeTab = len(m.agents)
+			if m.activeTab > m.maxTab() {
+				m.activeTab = m.maxTab()
 			}
 		}
 		m.refreshViewport()
@@ -607,11 +673,17 @@ func computeTabYOffsets(agents []ipc.AgentState) []int {
 	offsets := make([]int, 0, 1+len(agents))
 	y := 3 // top padding + "  OWL NEST" + blank line
 
-	// Console tab: 3 content lines + 2 padding = 5
+	hasMeta := len(agents) > 0 && agents[0].Name == "owl"
+
+	// Tab 0: meta-agent or console (3 content lines + 2 padding = 5)
 	offsets = append(offsets, y)
 	y += 5
 
-	for _, ag := range agents {
+	// User agent tabs: skip agents[0] when meta-agent is present
+	for i, ag := range agents {
+		if i == 0 && hasMeta {
+			continue
+		}
 		offsets = append(offsets, y)
 		lines := 3
 		if ag.VicheID != "" {
@@ -656,8 +728,19 @@ func (m model) View() string {
 	var mainContent string
 	var rawInput string
 
-	if m.activeTab == 0 {
-		// ── Console Tab ──
+	if m.activeTab == 0 && m.isMetaPresent() {
+		// ── Meta-agent Tab (Tab 0 with owl at agents[0]) ──
+		ag := m.agents[0]
+		col, icon := stateStyle(ag.State)
+		stateBadge := lipgloss.NewStyle().Foreground(Grey).Background(PaneBg).Render(fmt.Sprintf(" [%s]", ag.State))
+		header := lipgloss.NewStyle().Foreground(col).Bold(true).Background(PaneBg).Render(fmt.Sprintf("%s owl", icon)) + stateBadge
+		spacer := lipgloss.NewStyle().Background(PaneBg).Render(
+			strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-4)))
+		headerLine := header + spacer
+		mainContent = headerLine + "\n\n" + m.viewport.View()
+		rawInput = m.textInput.View()
+	} else if m.activeTab == 0 {
+		// ── Console Tab (no meta-agent) ──
 		header := lipgloss.NewStyle().Foreground(Yellow).Bold(true).Background(PaneBg).Render("Console")
 		spacer := lipgloss.NewStyle().Background(PaneBg).Render(
 			strings.Repeat(" ", max(0, mainWidth-lipgloss.Width(header)-4)))
@@ -673,8 +756,8 @@ func (m model) View() string {
 		rawInput = m.textInput.View()
 	} else {
 		// ── Agent Tab ──
-		idx := m.activeTab - 1
-		if idx < len(m.agents) {
+		idx := m.activeAgentIndex()
+		if idx >= 0 && idx < len(m.agents) {
 			ag := m.agents[idx]
 			col, icon := stateStyle(ag.State)
 			stateBadge := lipgloss.NewStyle().Foreground(Grey).Background(PaneBg).Render(fmt.Sprintf(" [%s]", ag.State))
@@ -717,26 +800,56 @@ func (m model) View() string {
 
 	// ── Sidebar ──
 	var tabs []string
+	hasMeta := m.isMetaPresent()
 
-	// Console tab
-	consoleBg := AppBg
-	if m.activeTab == 0 {
-		consoleBg = PaneBg
+	// Tab 0: meta-agent (when present) or console fallback
+	if hasMeta {
+		ag := m.agents[0]
+		col, _ := stateStyle(ag.State)
+		bg := AppBg
+		if m.activeTab == 0 {
+			bg = PaneBg
+		}
+		nameStyle := lipgloss.NewStyle().Bold(true).Foreground(Fg).Background(bg)
+		if m.activeTab == 0 {
+			nameStyle = nameStyle.Foreground(Green)
+		}
+		line1 := lipgloss.NewStyle().Foreground(col).Background(bg).Render("🦉") +
+			lipgloss.NewStyle().Background(bg).Render("  ") +
+			nameStyle.Render("owl")
+		line2 := lipgloss.NewStyle().Foreground(Grey).Background(bg).Render("meta-agent")
+		line3 := lipgloss.NewStyle().Foreground(col).Background(bg).Render("● " + ag.State)
+		metaContent := line1 + "\n" + line2 + "\n" + line3
+		tabs = append(tabs, renderTab(metaContent, m.activeTab == 0, sidebarWidth))
+	} else {
+		consoleBg := AppBg
+		if m.activeTab == 0 {
+			consoleBg = PaneBg
+		}
+		cNameStyle := lipgloss.NewStyle().Bold(true).Foreground(Fg).Background(consoleBg)
+		if m.activeTab == 0 {
+			cNameStyle = cNameStyle.Foreground(Green)
+		}
+		cContent := lipgloss.NewStyle().Foreground(Yellow).Background(consoleBg).Render("💻") +
+			lipgloss.NewStyle().Background(consoleBg).Render("  ") +
+			cNameStyle.Render("Console") + "\n" +
+			lipgloss.NewStyle().Foreground(Grey).Background(consoleBg).Render("system") + "\n" +
+			lipgloss.NewStyle().Foreground(Yellow).Background(consoleBg).Render("● ready")
+		tabs = append(tabs, renderTab(cContent, m.activeTab == 0, sidebarWidth))
 	}
-	cNameStyle := lipgloss.NewStyle().Bold(true).Foreground(Fg).Background(consoleBg)
-	if m.activeTab == 0 {
-		cNameStyle = cNameStyle.Foreground(Green)
-	}
-	cContent := lipgloss.NewStyle().Foreground(Yellow).Background(consoleBg).Render("💻") +
-		lipgloss.NewStyle().Background(consoleBg).Render("  ") +
-		cNameStyle.Render("Console") + "\n" +
-		lipgloss.NewStyle().Foreground(Grey).Background(consoleBg).Render("system") + "\n" +
-		lipgloss.NewStyle().Foreground(Yellow).Background(consoleBg).Render("● ready")
-	tabs = append(tabs, renderTab(cContent, m.activeTab == 0, sidebarWidth))
 
-	// Agent tabs
+	// Agent tabs: skip the meta-agent (agents[0]) when it occupies Tab 0
 	for i, ag := range m.agents {
-		isActive := m.activeTab == i+1
+		if i == 0 && hasMeta {
+			continue // meta-agent is shown at Tab 0 above
+		}
+
+		// Compute the tab index for this agent
+		tabIdx := i + 1
+		if hasMeta {
+			tabIdx = i // Tab 1 = agents[1] when meta-agent present
+		}
+		isActive := m.activeTab == tabIdx
 		col, _ := stateStyle(ag.State)
 
 		bg := AppBg

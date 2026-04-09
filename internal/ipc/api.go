@@ -64,6 +64,7 @@ type HatchArgs struct {
 	Harness     string
 	HarnessArgs string
 	NoNetInject bool
+	MetaAgent   bool // internal: use meta-agent system prompt and tools instead of scaffolding
 }
 
 type HatchReply struct {

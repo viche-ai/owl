@@ -30,6 +30,7 @@ type AgentEngine struct {
 	vicheTools  *tools.VicheTools
 	systemTools *tools.SystemTools
 	taskTools   *tools.TaskTools
+	metaTools   *tools.MetaTools
 	taskLedger  *TaskLedger
 	toolDefs    []llm.ToolDef
 }
@@ -107,6 +108,13 @@ func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 	})
 
 	e.appendLog(fmt.Sprintf("> Model: %s/%s\n\n", provider.Name(), model))
+
+	// ── Meta-agent fast path ──
+	// Skip scaffolding, Viche, and task ledger. Use fixed identity + meta tools.
+	if args.MetaAgent {
+		e.runMetaAgent(args, inbox)
+		return
+	}
 
 	// ── Step 2: Scaffolding (Hatching) ──
 	e.setState("hatching")
@@ -398,20 +406,24 @@ func (e *AgentEngine) processMessage(content string) {
 	e.setState("flying")
 	e.appendLog("\n[Thinking]\n")
 
-	// Register inbound message as a new task
-	source := "user"
-	if strings.HasPrefix(content, "[Message from agent") {
-		parts := strings.SplitN(content, "]", 2)
-		if len(parts) > 0 {
-			source = strings.TrimPrefix(parts[0], "[Message from agent ")
+	var msgContent string
+	if e.taskLedger != nil {
+		// Register inbound message as a new task
+		source := "user"
+		if strings.HasPrefix(content, "[Message from agent") {
+			parts := strings.SplitN(content, "]", 2)
+			if len(parts) > 0 {
+				source = strings.TrimPrefix(parts[0], "[Message from agent ")
+			}
 		}
+		task := e.taskLedger.AddTask(truncate(content, 200), source)
+		msgContent = fmt.Sprintf("[TASK LEDGER]\n%s\n[END TASK LEDGER]\n\n[NEW MESSAGE (task %s)]\n%s",
+			e.taskLedger.ContextSummary(), task.ID, content)
+	} else {
+		msgContent = content
 	}
-	task := e.taskLedger.AddTask(truncate(content, 200), source)
 
-	// Inject task context into the message
-	taskContext := fmt.Sprintf("[TASK LEDGER]\n%s\n[END TASK LEDGER]\n\n[NEW MESSAGE (task %s)]\n%s", e.taskLedger.ContextSummary(), task.ID, content)
-
-	e.messages = append(e.messages, llm.Message{Role: llm.RoleUser, Content: taskContext})
+	e.messages = append(e.messages, llm.Message{Role: llm.RoleUser, Content: msgContent})
 
 	response := e.runWithTools()
 	if response != "" {
@@ -535,6 +547,13 @@ func (e *AgentEngine) runWithTools() string {
 				result = e.systemTools.Execute(call)
 			case "task_update":
 				result = e.taskTools.Execute(call)
+			case "list_agents", "create_agent", "validate_agent", "explain_agent",
+				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config":
+				if e.metaTools != nil {
+					result = e.metaTools.Execute(call)
+				} else {
+					result = "Error: meta tools not available"
+				}
 			default:
 				result = fmt.Sprintf("Unknown tool: %s", call.Name)
 			}

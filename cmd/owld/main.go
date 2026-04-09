@@ -55,6 +55,21 @@ func main() {
 		eng.Run(args, inbox)
 	}
 
+	// Auto-hatch the Owl meta-agent at index 0. It serves as the primary
+	// user interface in the TUI console tab and handles agent management.
+	workDir, _ := os.Getwd()
+	var metaReply ipc.HatchReply
+	if err := daemon.Hatch(&ipc.HatchArgs{
+		Name:      "owl",
+		Ambient:   true,
+		MetaAgent: true,
+		WorkDir:   workDir,
+	}, &metaReply); err != nil {
+		log.Println("Warning: failed to hatch meta-agent:", err)
+	} else {
+		log.Println("Meta-agent hatched:", metaReply.Message)
+	}
+
 	err = rpc.RegisterName("Daemon", daemon)
 	if err != nil {
 		log.Fatal("Format of service isn't correct: ", err)
