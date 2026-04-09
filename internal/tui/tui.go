@@ -448,10 +448,10 @@ func (m *model) handleCommand(cmdStr string) {
 		m.consoleHistory = append(m.consoleHistory, "  viche status               Show registries")
 		m.consoleHistory = append(m.consoleHistory, "  clear                      Clear console")
 		m.consoleHistory = append(m.consoleHistory, lipgloss.NewStyle().Foreground(Yellow).Render("Agent tab shortcuts:"))
-		m.consoleHistory = append(m.consoleHistory, "  c   Clone selected agent")
-		m.consoleHistory = append(m.consoleHistory, "  s   Graceful stop")
-		m.consoleHistory = append(m.consoleHistory, "  S   Force stop (immediate)")
-		m.consoleHistory = append(m.consoleHistory, "  x   Remove/archive agent")
+		m.consoleHistory = append(m.consoleHistory, "  alt+c   Clone selected agent")
+		m.consoleHistory = append(m.consoleHistory, "  alt+s   Graceful stop")
+		m.consoleHistory = append(m.consoleHistory, "  alt+k   Force stop (immediate kill)")
+		m.consoleHistory = append(m.consoleHistory, "  alt+x   Remove/archive agent")
 
 	case "clear":
 		m.consoleHistory = []string{}
@@ -573,7 +573,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.refreshViewport()
 			return m, nil
-		case "c":
+		case "alt+c":
+			// Clone selected agent (alt+c)
 			if m.activeTab > 0 {
 				agentIndex := m.activeAgentIndex()
 				msg, err := sendClone(agentIndex)
@@ -585,8 +586,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "s":
-			// Graceful stop of selected agent
+		case "alt+s":
+			// Graceful stop of selected agent (alt+s)
 			if m.activeTab > 0 {
 				agentIndex := m.activeAgentIndex()
 				if agentIndex >= 0 && agentIndex < len(m.agents) {
@@ -603,8 +604,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "S":
-			// Force-stop of selected agent (shift+s)
+		case "alt+k":
+			// Force-stop of selected agent (alt+k)
 			if m.activeTab > 0 {
 				agentIndex := m.activeAgentIndex()
 				if agentIndex >= 0 && agentIndex < len(m.agents) {
@@ -621,8 +622,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "x":
-			// Remove/archive selected agent
+		case "alt+x":
+			// Remove/archive selected agent (alt+x)
 			if m.activeTab > 0 {
 				agentIndex := m.activeAgentIndex()
 				if agentIndex >= 0 && agentIndex < len(m.agents) {
