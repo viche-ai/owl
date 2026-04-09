@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,19 +15,22 @@ import (
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
 	"github.com/viche-ai/owl/internal/logs"
+	"github.com/viche-ai/owl/internal/metrics"
 	"github.com/viche-ai/owl/internal/runs"
 	"github.com/viche-ai/owl/internal/tools"
 	"github.com/viche-ai/owl/internal/viche"
 )
 
 type AgentEngine struct {
-	State    *ipc.AgentState
-	Cfg      *config.Config
-	Mu       func(func())
-	Router   *llm.Router
-	RunStore *runs.Store // optional; persists state transitions to disk
+	State       *ipc.AgentState
+	Cfg         *config.Config
+	Mu          func(func())
+	Router      *llm.Router
+	RunStore    *runs.Store    // optional; persists state transitions to disk
+	MetricStore *metrics.Store // optional; persists run metrics to disk
 
 	logWriter   *logs.Writer
+	collector   *metrics.Collector
 	runCtx      context.Context // cancellable context for the current run
 	messages    []llm.Message
 	provider    llm.Provider
@@ -66,6 +70,17 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 			_ = e.RunStore.Save(rec)
 		}
 	}
+
+	// Initialise metrics collector for this run
+	adapterName := ""
+	if parts := strings.SplitN(args.ModelID, "/", 2); len(parts) == 2 {
+		adapterName = parts[0]
+	}
+	workspaceForMetrics := args.WorkDir
+	if workspaceForMetrics == "" {
+		workspaceForMetrics, _ = os.Getwd()
+	}
+	e.collector = metrics.NewCollector(runID, e.State.Name, args.ModelID, adapterName, workspaceForMetrics)
 
 	e.appendLog("> Booting agent engine...\n")
 	e.appendLog(fmt.Sprintf("> Log: %s\n", logPath))
@@ -378,6 +393,15 @@ Your initial plan was:
 
 	systemPrompt := promptBuilder.String()
 
+	// Record prompt hash for metrics correlation
+	if e.collector != nil {
+		hash := sha256.Sum256([]byte(systemPrompt))
+		e.collector.SetPromptHash(fmt.Sprintf("%x", hash))
+		if agentDef != nil {
+			e.collector.SetAgentVersion(agentDef.Version)
+		}
+	}
+
 	e.messages = []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
@@ -407,6 +431,22 @@ Your initial plan was:
 	}
 	e.appendLog("\n> Agent stopped.\n")
 	e.setState("stopped")
+
+	// Finalise metrics and persist
+	if e.collector != nil {
+		status := "completed"
+		if ctx.Err() != nil {
+			status = "stopped"
+		}
+		m := e.collector.Finalize(status)
+		if e.MetricStore != nil {
+			_ = e.MetricStore.Save(m) // best-effort
+		}
+		// Write per-agent metrics.md if we know the agent name
+		if args.Agent != "" {
+			writeAgentMetricsMD(args.Agent, args.Scope, m)
+		}
+	}
 
 	// Persist final state
 	if e.RunStore != nil {
@@ -450,6 +490,9 @@ func (e *AgentEngine) processMessage(content string) {
 			}
 		}
 		task := e.taskLedger.AddTask(truncate(content, 200), source)
+		if e.collector != nil {
+			e.collector.RecordTaskCreated()
+		}
 		msgContent = fmt.Sprintf("[TASK LEDGER]\n%s\n[END TASK LEDGER]\n\n[NEW MESSAGE (task %s)]\n%s",
 			e.taskLedger.ContextSummary(), task.ID, content)
 	} else {
@@ -539,6 +582,9 @@ func (e *AgentEngine) runWithTools() string {
 					e.State.Ctx = fmt.Sprintf("%dk / 128k", (event.Usage.TotalTokens+500)/1000)
 				})
 				e.logWriter.LogUsage(event.Usage.PromptTokens, event.Usage.CompletionTokens, e.model)
+				if e.collector != nil {
+					e.collector.RecordTokenUsage(event.Usage.PromptTokens, event.Usage.CompletionTokens)
+				}
 			}
 			if event.Done {
 				break
@@ -590,7 +636,7 @@ func (e *AgentEngine) runWithTools() string {
 				result = e.taskTools.Execute(call)
 			case "list_agents", "create_agent", "validate_agent", "explain_agent",
 				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config",
-				"query_logs":
+				"query_logs", "query_metrics", "compare_versions":
 				if e.metaTools != nil {
 					result = e.metaTools.Execute(call)
 				} else {
@@ -610,6 +656,18 @@ func (e *AgentEngine) runWithTools() string {
 			lowerResult := strings.ToLower(result)
 			if strings.Contains(lowerResult, "error") || strings.Contains(lowerResult, "failed") || strings.Contains(lowerResult, "unknown tool") {
 				outcome = "Failed"
+			}
+			if e.collector != nil {
+				success := outcome == "Success"
+				e.collector.RecordToolCall(call.Name, success)
+				if call.Name == "viche_send" {
+					e.collector.RecordHandoff()
+				}
+				if call.Name == "task_update" {
+					if statusVal, ok := call.Args["status"].(string); ok && statusVal == "completed" {
+						e.collector.RecordTaskCompleted()
+					}
+				}
 			}
 			e.logVerbose(fmt.Sprintf("> Tool execution completed: %s\n", outcome))
 
@@ -687,4 +745,77 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// writeAgentMetricsMD writes a human-readable metrics summary to the agent's directory.
+func writeAgentMetricsMD(agentName, scope string, m *metrics.RunMetrics) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	var agentDir string
+	switch scope {
+	case "global", "":
+		agentDir = filepath.Join(home, ".owl", "agents", agentName)
+	case "project":
+		cwd, _ := os.Getwd()
+		agentDir = filepath.Join(cwd, ".owl", "agents", agentName)
+	default:
+		agentDir = filepath.Join(home, ".owl", "agents", agentName)
+	}
+
+	if _, err := os.Stat(agentDir); err != nil {
+		return // agent directory doesn't exist yet
+	}
+
+	dur := ""
+	if m.DurationMS > 0 {
+		dur = fmt.Sprintf("%.1fs", float64(m.DurationMS)/1000)
+	}
+	cost := ""
+	if m.EstimatedCost > 0 {
+		cost = fmt.Sprintf(" (~$%.4f)", m.EstimatedCost)
+	}
+
+	content := fmt.Sprintf(`# Metrics: %s
+
+**Last run:** %s
+**Run ID:** %s
+**Status:** %s
+**Model:** %s
+**Duration:** %s%s
+
+## Token Usage
+- Input: %d
+- Output: %d
+
+## Tool Usage
+- Total calls: %d
+- Failed calls: %d
+
+## Task Ledger
+- Tasks created: %d
+- Tasks completed: %d
+
+## Handoffs
+- Viche handoffs: %d
+`,
+		agentName,
+		m.StartTS.Format("2006-01-02 15:04:05"),
+		m.RunID,
+		m.Status,
+		m.Model,
+		dur,
+		cost,
+		m.TokenInput,
+		m.TokenOutput,
+		m.ToolCallCount,
+		m.ToolFailCount,
+		m.TasksCreated,
+		m.TasksCompleted,
+		m.HandoffCount,
+	)
+
+	_ = os.WriteFile(filepath.Join(agentDir, "metrics.md"), []byte(content), 0644)
 }

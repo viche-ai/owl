@@ -10,6 +10,7 @@ import (
 	"github.com/viche-ai/owl/internal/agents"
 	"github.com/viche-ai/owl/internal/config"
 	"github.com/viche-ai/owl/internal/logs"
+	"github.com/viche-ai/owl/internal/metrics"
 )
 
 // MetaTools implements the Owl meta-agent tool set for managing agent definitions.
@@ -38,6 +39,10 @@ func (t *MetaTools) Execute(call ToolCall) string {
 		return t.readProjectConfig(call)
 	case "query_logs":
 		return t.queryLogs(call)
+	case "query_metrics":
+		return t.queryMetrics(call)
+	case "compare_versions":
+		return t.compareVersions(call)
 	default:
 		return fmt.Sprintf("Unknown meta tool: %s", call.Name)
 	}
@@ -305,6 +310,49 @@ func (t *MetaTools) queryLogs(call ToolCall) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (t *MetaTools) queryMetrics(call ToolCall) string {
+	agentName, _ := call.Args["agent_name"].(string)
+	sinceStr, _ := call.Args["since"].(string)
+
+	store, err := metrics.NewStore()
+	if err != nil {
+		return fmt.Sprintf("Error: could not open metrics store: %v", err)
+	}
+
+	var since time.Time
+	if sinceStr != "" {
+		d, err := time.ParseDuration(sinceStr)
+		if err != nil {
+			return fmt.Sprintf("Error: invalid 'since' duration %q (use Go duration like '1h', '24h'): %v", sinceStr, err)
+		}
+		since = time.Now().Add(-d)
+	}
+
+	result, err := store.QueryMetrics(agentName, since)
+	if err != nil {
+		return fmt.Sprintf("Error querying metrics: %v", err)
+	}
+	return result
+}
+
+func (t *MetaTools) compareVersions(call ToolCall) string {
+	agentName, _ := call.Args["agent_name"].(string)
+	if agentName == "" {
+		return "Error: agent_name is required"
+	}
+
+	store, err := metrics.NewStore()
+	if err != nil {
+		return fmt.Sprintf("Error: could not open metrics store: %v", err)
+	}
+
+	result, err := store.CompareVersions(agentName)
+	if err != nil {
+		return fmt.Sprintf("Error comparing versions: %v", err)
+	}
+	return result
 }
 
 // resolveNewAgentDir returns the target directory path for a new agent definition.

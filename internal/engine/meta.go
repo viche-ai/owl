@@ -31,6 +31,8 @@ Tools available to you:
 - read_agent_file: read any file in an agent definition directory
 - read_project_config: read the project context and guardrails
 - query_logs: query structured agent logs to detect errors and usage patterns
+- query_metrics: query per-run metrics (token usage, cost, tool failures, duration) for an agent or all agents
+- compare_versions: compare success rates across prompt versions for an agent
 - shell_exec, file_read, file_write, file_edit: general file operations
 
 WORKING PRINCIPLES:
@@ -207,6 +209,38 @@ func MetaAgentToolDefs() []tools.ToolDefinition {
 					},
 				},
 				"required": []string{},
+			},
+		},
+		{
+			Name:        "query_metrics",
+			Description: "Query per-run metrics (token usage, estimated cost, tool failures, duration, status) for an agent or all agents. Use this to detect performance trends and failure patterns.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"agent_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by agent name (empty for all agents)",
+					},
+					"since": map[string]interface{}{
+						"type":        "string",
+						"description": "Time window as a Go duration (e.g. '1h', '24h', '7d' — note: 'd' is not a Go duration, use '168h' for 7 days)",
+					},
+				},
+				"required": []string{},
+			},
+		},
+		{
+			Name:        "compare_versions",
+			Description: "Compare success rates and token usage across prompt versions (identified by prompt hash) for a specific agent. Use this to evaluate the impact of AGENTS.md edits.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"agent_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Agent name to compare prompt versions for",
+					},
+				},
+				"required": []string{"agent_name"},
 			},
 		},
 	}

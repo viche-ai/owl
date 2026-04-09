@@ -324,6 +324,8 @@ func main() {
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(migrateCmd)
 	rootCmd.AddCommand(runsCmd)
+	rootCmd.AddCommand(metricsCmd)
+	rootCmd.AddCommand(recommendCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/viche-ai/owl/internal/engine"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
+	"github.com/viche-ai/owl/internal/metrics"
 )
 
 const SocketPath = "/tmp/owld.sock"
@@ -46,13 +47,19 @@ func main() {
 
 	daemon := ipc.NewService()
 
+	metricStore, err := metrics.NewStore()
+	if err != nil {
+		log.Println("Warning: could not initialise metrics store:", err)
+	}
+
 	ipc.RunEngineHook = func(ctx context.Context, state *ipc.AgentState, mu func(func()), args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 		eng := &engine.AgentEngine{
-			State:    state,
-			Cfg:      cfg,
-			Mu:       mu,
-			Router:   router,
-			RunStore: daemon.RunStore,
+			State:       state,
+			Cfg:         cfg,
+			Mu:          mu,
+			Router:      router,
+			RunStore:    daemon.RunStore,
+			MetricStore: metricStore,
 		}
 		eng.Run(ctx, args, inbox)
 	}
