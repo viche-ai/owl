@@ -2,6 +2,9 @@ package ipc
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -49,7 +52,10 @@ type HatchArgs struct {
 	Description string
 	Registry    string
 	ModelID     string
-	Template    string
+	Agent       string // replaces Template
+	Template    string // deprecated: use Agent
+	Scope       string // "project", "global", or "" for auto-resolve
+	DryRun      bool
 	Thinking    bool
 	Effort      string
 	Name        string
@@ -63,6 +69,16 @@ type HatchArgs struct {
 type HatchReply struct {
 	Success bool
 	Message string
+}
+
+type DryRunReply struct {
+	ResolvedAgent string // name of the resolved agent definition
+	Scope         string // "project", "global", or "legacy"
+	SourcePath    string // absolute path to agent definition
+	PromptStack   string // assembled prompt layers (human-readable summary)
+	ModelID       string
+	Valid         bool
+	Errors        []string
 }
 
 type CloneArgs struct {
@@ -90,6 +106,91 @@ type CloneResponse struct {
 }
 
 var RunEngineHook func(state *AgentState, mu func(func()), args *HatchArgs, inbox chan InboundMessage)
+
+// DryRunHatch resolves the agent definition and prompt stack without spawning an agent.
+func (s *Service) DryRunHatch(args *HatchArgs, reply *DryRunReply) error {
+	agentName := args.Agent
+	if agentName == "" {
+		agentName = args.Template
+	}
+
+	reply.ResolvedAgent = agentName
+	reply.ModelID = args.ModelID
+
+	if agentName == "" {
+		reply.Valid = true
+		reply.Scope = "none"
+		reply.PromptStack = fmt.Sprintf("Description: %s\nModel: %s", args.Description, args.ModelID)
+		return nil
+	}
+
+	// Resolution order: project > global > legacy templates
+	home, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+
+	type candidate struct {
+		scope string
+		path  string
+	}
+
+	var candidates []candidate
+
+	if args.Scope == "" || args.Scope == "project" {
+		candidates = append(candidates, candidate{"project", filepath.Join(cwd, ".owl", "agents", agentName)})
+	}
+	if args.Scope == "" || args.Scope == "global" {
+		candidates = append(candidates, candidate{"global", filepath.Join(home, ".owl", "agents", agentName)})
+	}
+	if args.Scope == "" {
+		candidates = append(candidates, candidate{"legacy", filepath.Join(home, ".owl", "templates", agentName+".json")})
+	}
+
+	for _, c := range candidates {
+		var found bool
+		var promptLines []string
+
+		if c.scope == "legacy" {
+			if b, err := os.ReadFile(c.path); err == nil {
+				found = true
+				reply.Scope = "legacy"
+				reply.SourcePath = c.path
+				promptLines = append(promptLines, fmt.Sprintf("[legacy template] %s", c.path))
+				promptLines = append(promptLines, string(b))
+			}
+		} else {
+			agentsMD := filepath.Join(c.path, "AGENTS.md")
+			if _, err := os.Stat(agentsMD); err == nil {
+				found = true
+				reply.Scope = c.scope
+				reply.SourcePath = c.path
+				if content, err := os.ReadFile(agentsMD); err == nil {
+					promptLines = append(promptLines, fmt.Sprintf("[%s] AGENTS.md:", c.scope))
+					promptLines = append(promptLines, string(content))
+				}
+				roleMD := filepath.Join(c.path, "role.md")
+				if content, err := os.ReadFile(roleMD); err == nil {
+					promptLines = append(promptLines, "[role.md]:")
+					promptLines = append(promptLines, string(content))
+				}
+				guardrailsMD := filepath.Join(c.path, "guardrails.md")
+				if content, err := os.ReadFile(guardrailsMD); err == nil {
+					promptLines = append(promptLines, "[guardrails.md]:")
+					promptLines = append(promptLines, string(content))
+				}
+			}
+		}
+
+		if found {
+			reply.PromptStack = strings.Join(promptLines, "\n")
+			reply.Valid = true
+			return nil
+		}
+	}
+
+	reply.Valid = false
+	reply.Errors = append(reply.Errors, fmt.Sprintf("agent definition %q not found (searched project, global, and legacy scopes)", agentName))
+	return nil
+}
 
 func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 	s.Mu.Lock()
