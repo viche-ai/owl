@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/viche-ai/owl/internal/agents"
 	"github.com/viche-ai/owl/internal/config"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
@@ -300,29 +301,21 @@ Output ONLY valid JSON.`, args.Description)
 	// ── Step 4: Setup main system prompt ──
 	projectCfg, _ := config.LoadProjectConfig(workDir)
 
-	globalPrompt := e.Cfg.SystemPrompt
-	if globalPrompt == "" {
-		globalPrompt = config.DefaultSystemPrompt()
+	agentResolver := agents.NewResolver(workDir)
+	var agentDef *agents.AgentDefinition
+	if args.Agent != "" {
+		if def, err := agentResolver.Resolve(args.Agent, args.Scope); err == nil {
+			agentDef = def
+		} else {
+			e.appendLog(fmt.Sprintf("[Warning] Could not load agent definition %q: %v\n", args.Agent, err))
+		}
 	}
+
+	promptStack := agents.BuildPromptStack(agentDef, e.Cfg, projectCfg, "")
 
 	var promptBuilder strings.Builder
-	promptBuilder.WriteString("[GLOBAL]\n")
-	promptBuilder.WriteString(globalPrompt)
+	promptBuilder.WriteString(promptStack.Render())
 	promptBuilder.WriteString("\n\n")
-
-	if projectCfg.Context != "" {
-		promptBuilder.WriteString("[PROJECT CONTEXT]\n")
-		promptBuilder.WriteString(projectCfg.Context)
-		promptBuilder.WriteString("\n\n")
-	}
-
-	if len(projectCfg.Guardrails) > 0 {
-		promptBuilder.WriteString("[PROJECT GUARDRAILS]\nCRITICAL GUARDRAILS:\n")
-		for _, g := range projectCfg.Guardrails {
-			promptBuilder.WriteString("- " + g + "\n")
-		}
-		promptBuilder.WriteString("\n")
-	}
 
 	fmt.Fprintf(&promptBuilder, `[RUNTIME]
 You are an AI agent. Your identity: %s
