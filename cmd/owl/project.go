@@ -64,7 +64,7 @@ func runProjectInit(cmd *cobra.Command, args []string) {
 	fmt.Printf("  Templates directory: %s/\n", templatesDir)
 }
 
-var agentsCmd = &cobra.Command{
+var projectAgentsCmd = &cobra.Command{
 	Use:   "agents",
 	Short: "Describe agent functionality and create AGENTS.md for the project",
 	Run:   runAgentsCmd,
@@ -462,7 +462,7 @@ func runTemplatesDelete(cmd *cobra.Command, args []string) {
 
 func init() {
 	projectCmd.AddCommand(initCmd)
-	projectCmd.AddCommand(agentsCmd)
+	projectCmd.AddCommand(projectAgentsCmd)
 	projectCmd.AddCommand(guardsCmd)
 	projectCmd.AddCommand(templatesCmd)
 	templatesCmd.AddCommand(templatesListCmd)
