@@ -93,6 +93,10 @@ func printRunMetrics(m *metrics.RunMetrics) {
 	if m.DurationMS > 0 {
 		dur = fmt.Sprintf("%.1fs", float64(m.DurationMS)/1000)
 	}
+	activeDur := "—"
+	if m.ActiveDurationMS > 0 {
+		activeDur = fmt.Sprintf("%.1fs", float64(m.ActiveDurationMS)/1000)
+	}
 	cost := "—"
 	if m.EstimatedCost > 0 {
 		cost = fmt.Sprintf("~$%.4f", m.EstimatedCost)
@@ -111,7 +115,7 @@ func printRunMetrics(m *metrics.RunMetrics) {
 	if m.EndTS != nil {
 		fmt.Printf("  Ended:       %s\n", m.EndTS.Format("2006-01-02 15:04:05"))
 	}
-	fmt.Printf("  Duration:    %s\n", dur)
+	fmt.Printf("  Duration:    %s (active: %s)\n", dur, activeDur)
 	fmt.Printf("  Cost (est.): %s\n", cost)
 	fmt.Println()
 	fmt.Println("  Token Usage")
@@ -142,7 +146,11 @@ func printAgentSummary(summary *metrics.AgentMetricsSummary, records []metrics.R
 	fmt.Println("───────────────────────────────────────")
 	fmt.Printf("  Total runs:    %d\n", summary.TotalRuns)
 	fmt.Printf("  Success rate:  %.0f%%\n", summary.SuccessRate*100)
-	fmt.Printf("  Avg duration:  %.1fs\n", float64(summary.AvgDurationMS)/1000)
+	if summary.AvgActiveDurationMS > 0 {
+		fmt.Printf("  Avg duration:  %.1fs (active: %.1fs)\n", float64(summary.AvgDurationMS)/1000, float64(summary.AvgActiveDurationMS)/1000)
+	} else {
+		fmt.Printf("  Avg duration:  %.1fs\n", float64(summary.AvgDurationMS)/1000)
+	}
 	fmt.Printf("  Avg tokens in: %d\n", summary.AvgTokensIn)
 	fmt.Printf("  Avg tokens out:%d\n", summary.AvgTokensOut)
 	fmt.Printf("  Total cost:    ~$%.4f\n", summary.TotalCost)
@@ -208,14 +216,19 @@ var recommendCmd = &cobra.Command{
 		defer func() { _ = client.Close() }()
 
 		prompt := fmt.Sprintf(
-			"Please analyze the metrics and logs for agent %q and suggest improvements.\n"+
+			"Analyze agent %q and suggest improvements.\n"+
 				"Steps:\n"+
 				"1. Call query_metrics with agent_name=%q to review recent run data.\n"+
+				"   Note: metrics include both wall-clock duration and active duration.\n"+
+				"   For ambient agents (long-running, waiting for messages), focus on active duration — wall-clock time includes idle wait and is not meaningful for performance analysis.\n"+
 				"2. Call compare_versions with agent_name=%q to compare prompt versions.\n"+
 				"3. Call query_logs with agent_name=%q and level=error to identify recurring failures.\n"+
-				"4. Summarize the top failure modes and propose ranked prompt edits.\n"+
+				"4. Call read_agent_file with name=%q and file=AGENTS.md to understand the agent's task and role.\n"+
+				"5. Call list_models to see configured providers.\n"+
+				"6. Based on the agent's task complexity (from AGENTS.md), token usage patterns, and available models, recommend whether the current model is appropriate or if a different model would be better suited. Consider cost vs capability tradeoffs.\n"+
+				"7. Summarize findings: top failure modes, performance insights, model recommendation, and proposed prompt edits.\n"+
 				"Do not apply any changes — only suggest them with suggest_edit.",
-			recommendAgent, recommendAgent, recommendAgent, recommendAgent,
+			recommendAgent, recommendAgent, recommendAgent, recommendAgent, recommendAgent,
 		)
 
 		// Find the meta-agent (always index 0) and send the message

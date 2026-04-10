@@ -43,6 +43,8 @@ func (t *MetaTools) Execute(call ToolCall) string {
 		return t.queryMetrics(call)
 	case "compare_versions":
 		return t.compareVersions(call)
+	case "list_models":
+		return t.listModels(call)
 	default:
 		return fmt.Sprintf("Unknown meta tool: %s", call.Name)
 	}
@@ -353,6 +355,48 @@ func (t *MetaTools) compareVersions(call ToolCall) string {
 		return fmt.Sprintf("Error comparing versions: %v", err)
 	}
 	return result
+}
+
+// wellKnownModels maps provider names to commonly available models.
+var wellKnownModels = map[string][]string{
+	"anthropic":  {"claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"},
+	"google":     {"gemini-2.5-pro", "gemini-2.5-flash"},
+	"openai":     {"gpt-4o", "gpt-4o-mini", "o3-mini"},
+	"groq":       {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"},
+	"deepseek":   {"deepseek-chat", "deepseek-reasoner"},
+	"openrouter": {"anthropic/claude-sonnet-4-6", "google/gemini-2.5-pro"},
+}
+
+func (t *MetaTools) listModels(_ ToolCall) string {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Sprintf("Error loading config: %v", err)
+	}
+
+	if len(cfg.Models.Providers) == 0 {
+		return "No providers configured. Run 'owl setup' to add providers."
+	}
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("Default model: %s", cfg.Models.Default))
+	lines = append(lines, fmt.Sprintf("Configured providers (%d):", len(cfg.Models.Providers)))
+
+	for name := range cfg.Models.Providers {
+		models := wellKnownModels[name]
+		if len(models) > 0 {
+			lines = append(lines, fmt.Sprintf("  %s: %s", name, strings.Join(models, ", ")))
+		} else {
+			lines = append(lines, fmt.Sprintf("  %s: (custom provider — use list_models endpoint or check docs)", name))
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, "Model selection guidance:")
+	lines = append(lines, "  - Complex reasoning, planning, multi-step analysis → opus-class or gemini-2.5-pro")
+	lines = append(lines, "  - General coding, triage, reviews → sonnet-class or gpt-4o")
+	lines = append(lines, "  - Fast, simple tasks, high-volume → haiku-class, flash, or gpt-4o-mini")
+	lines = append(lines, "  - Set default_model in agent.yaml to override the global default for a specific agent")
+	return strings.Join(lines, "\n")
 }
 
 // resolveNewAgentDir returns the target directory path for a new agent definition.

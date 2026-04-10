@@ -149,11 +149,60 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 		return
 	}
 
-	// ── Step 2: Scaffolding (Hatching) ──
-	e.setState("hatching")
-	e.appendLog("[Thinking]\nScaffolding agent identity...\n")
+	// ── Step 2: Resolve agent definition (before scaffolding) ──
+	workDir := args.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
 
-	scaffoldPrompt := fmt.Sprintf(`You are an AI agent being initialized.
+	var agentDef *agents.AgentDefinition
+	if args.Agent != "" {
+		agentResolver := agents.NewResolver(workDir)
+		e.appendLog(fmt.Sprintf("> Resolving agent definition %q (scope=%q, workdir=%s)\n", args.Agent, args.Scope, workDir))
+		if def, err := agentResolver.Resolve(args.Agent, args.Scope); err == nil {
+			agentDef = def
+			e.appendLog(fmt.Sprintf("> Loaded agent definition %q from %s scope (%s)\n", def.Name, def.Scope, def.SourcePath))
+			if def.AgentsMD != "" {
+				e.appendLog(fmt.Sprintf("> AGENTS.md loaded (%d bytes)\n", len(def.AgentsMD)))
+			}
+			if def.RoleMD != "" {
+				e.appendLog(fmt.Sprintf("> role.md loaded (%d bytes)\n", len(def.RoleMD)))
+			}
+			if def.GuardrailsMD != "" {
+				e.appendLog(fmt.Sprintf("> guardrails.md loaded (%d bytes)\n", len(def.GuardrailsMD)))
+			}
+		} else {
+			e.appendLog(fmt.Sprintf("[Warning] Could not load agent definition %q: %v\n", args.Agent, err))
+		}
+	}
+
+	// ── Step 3: Scaffolding (Hatching) ──
+	e.setState("hatching")
+
+	type ScaffoldResult struct {
+		Name         string   `json:"name"`
+		Capabilities []string `json:"capabilities"`
+		Plan         any      `json:"plan"`
+	}
+
+	var identity ScaffoldResult
+	var planText string
+
+	if agentDef != nil {
+		// Agent definition provides identity — skip LLM scaffolding
+		e.appendLog(fmt.Sprintf("> Using agent definition %q for identity (skipping LLM scaffold)\n", agentDef.Name))
+		identity.Name = agentDef.Name
+		identity.Capabilities = agentDef.Capabilities
+		if agentDef.Description != "" {
+			planText = agentDef.Description
+		} else {
+			planText = "Agent identity loaded from definition"
+		}
+	} else {
+		// No agent definition — scaffold identity via LLM
+		e.appendLog("[Thinking]\nScaffolding agent identity...\n")
+
+		scaffoldPrompt := fmt.Sprintf(`You are an AI agent being initialized.
 Your purpose based on user request: %s
 
 You will be connected to the Viche agent network. You need an identity.
@@ -165,64 +214,52 @@ Please output a JSON block with the following structure:
 }
 Output ONLY valid JSON.`, args.Description)
 
-	e.messages = []llm.Message{
-		{Role: llm.RoleSystem, Content: scaffoldPrompt},
-		{Role: llm.RoleUser, Content: "Initialize. What is your plan?"},
-	}
-
-	scaffoldResponse := e.runWithTools()
-	if scaffoldResponse == "" {
-		return
-	}
-
-	// Attempt to parse JSON from scaffold response
-	type ScaffoldResult struct {
-		Name         string   `json:"name"`
-		Capabilities []string `json:"capabilities"`
-		Plan         any      `json:"plan"`
-	}
-
-	var identity ScaffoldResult
-
-	// simple json extraction if wrapped in code blocks
-	jsonStr := scaffoldResponse
-	if start := strings.Index(jsonStr, "{"); start != -1 {
-		if end := strings.LastIndex(jsonStr, "}"); end != -1 {
-			jsonStr = jsonStr[start : end+1]
+		e.messages = []llm.Message{
+			{Role: llm.RoleSystem, Content: scaffoldPrompt},
+			{Role: llm.RoleUser, Content: "Initialize. What is your plan?"},
 		}
-	}
 
-	var planText string
-	if err := json.Unmarshal([]byte(jsonStr), &identity); err != nil {
-		e.appendLog(fmt.Sprintf("[Warning] Failed to parse scaffolding JSON: %v\n", err))
-		// Fallbacks
-		identity.Name = sanitizeName(args.Description)
-		if len(identity.Name) == 0 {
-			identity.Name = "owl-agent"
+		scaffoldResponse := e.runWithTools()
+		if scaffoldResponse == "" {
+			return
 		}
-		identity.Capabilities = []string{"owl-agent"}
-		planText = scaffoldResponse // just dump the text
-	} else {
-		// Plan could be an array of strings or a single string
-		if pArr, ok := identity.Plan.([]interface{}); ok {
-			var lines []string
-			for _, item := range pArr {
-				if s, ok := item.(string); ok {
-					lines = append(lines, "- "+s)
-				}
+
+		// simple json extraction if wrapped in code blocks
+		jsonStr := scaffoldResponse
+		if start := strings.Index(jsonStr, "{"); start != -1 {
+			if end := strings.LastIndex(jsonStr, "}"); end != -1 {
+				jsonStr = jsonStr[start : end+1]
 			}
-			planText = strings.Join(lines, "\n")
-		} else if pStr, ok := identity.Plan.(string); ok {
-			planText = pStr
+		}
+
+		if err := json.Unmarshal([]byte(jsonStr), &identity); err != nil {
+			e.appendLog(fmt.Sprintf("[Warning] Failed to parse scaffolding JSON: %v\n", err))
+			identity.Name = sanitizeName(args.Description)
+			if len(identity.Name) == 0 {
+				identity.Name = "owl-agent"
+			}
+			identity.Capabilities = []string{"owl-agent"}
+			planText = scaffoldResponse
 		} else {
-			planText = fmt.Sprintf("%v", identity.Plan)
+			if pArr, ok := identity.Plan.([]interface{}); ok {
+				var lines []string
+				for _, item := range pArr {
+					if s, ok := item.(string); ok {
+						lines = append(lines, "- "+s)
+					}
+				}
+				planText = strings.Join(lines, "\n")
+			} else if pStr, ok := identity.Plan.(string); ok {
+				planText = pStr
+			} else {
+				planText = fmt.Sprintf("%v", identity.Plan)
+			}
 		}
 	}
 
 	if len(identity.Capabilities) == 0 {
 		identity.Capabilities = []string{"owl-agent"}
 	} else {
-		// Always ensure 'owl-agent' is present so they can be discovered generally
 		hasOwl := false
 		for _, cap := range identity.Capabilities {
 			if cap == "owl-agent" {
@@ -235,7 +272,6 @@ Output ONLY valid JSON.`, args.Description)
 		}
 	}
 
-	// Rename if args.Name was explicitly provided
 	if args.Name != "" {
 		identity.Name = args.Name
 	}
@@ -278,15 +314,10 @@ Output ONLY valid JSON.`, args.Description)
 		ch := viche.NewChannel(vc.BaseURL(), agentID, vc.Token())
 
 		ch.OnMessage = func(msg viche.InboxMessage) {
-			// Do not process messages that are results/acknowledgements to prevent infinite loops
 			if msg.Type == "result" {
-				// Simply append them to the UI logs so the user sees it, but do NOT
-				// feed it into the agent's LLM inbox to trigger a response
 				e.appendLog(fmt.Sprintf("\n> [Viche result from %s] %s\n", msg.From, msg.Body))
 				return
 			}
-
-			// Route incoming Viche messages into the agent's main inbox to ensure sequential processing
 			inbox <- ipc.InboundMessage{
 				From:    msg.From,
 				Content: fmt.Sprintf("[Message from agent %s]: %s", msg.From, msg.Body),
@@ -298,7 +329,6 @@ Output ONLY valid JSON.`, args.Description)
 		} else {
 			e.appendLog("> Connected via WebSocket.\n")
 
-			// Set up Viche tools for this agent
 			e.vicheTools = &tools.VicheTools{Channel: ch, AgentID: agentID}
 			for _, def := range e.vicheTools.Definitions() {
 				e.toolDefs = append(e.toolDefs, llm.ToolDef{
@@ -307,16 +337,12 @@ Output ONLY valid JSON.`, args.Description)
 					Parameters:  def.Parameters,
 				})
 			}
-			e.appendLog(fmt.Sprintf("> %d Viche tools available: viche_discover, viche_send\n", len(e.toolDefs)))
+			e.appendLog(fmt.Sprintf("> %d Viche tools available: viche_discover, viche_send\n", len(e.vicheTools.Definitions())))
 		}
 		e.appendLog("\n")
 	}
 
 	// ── Step 3b: System tools (shell, file read/write/edit) ──
-	workDir := args.WorkDir
-	if workDir == "" {
-		workDir, _ = os.Getwd()
-	}
 	e.systemTools = &tools.SystemTools{WorkDir: workDir}
 	for _, def := range e.systemTools.Definitions() {
 		e.toolDefs = append(e.toolDefs, llm.ToolDef{
@@ -341,16 +367,6 @@ Output ONLY valid JSON.`, args.Description)
 
 	// ── Step 4: Setup main system prompt ──
 	projectCfg, _ := config.LoadProjectConfig(workDir)
-
-	agentResolver := agents.NewResolver(workDir)
-	var agentDef *agents.AgentDefinition
-	if args.Agent != "" {
-		if def, err := agentResolver.Resolve(args.Agent, args.Scope); err == nil {
-			agentDef = def
-		} else {
-			e.appendLog(fmt.Sprintf("[Warning] Could not load agent definition %q: %v\n", args.Agent, err))
-		}
-	}
 
 	promptStack := agents.BuildPromptStack(agentDef, e.Cfg, projectCfg, "")
 
@@ -384,8 +400,8 @@ Your initial plan was:
 		args.Description,
 		strings.Join(identity.Capabilities, ", "),
 		func() string {
-			if agentID != "" {
-				return fmt.Sprintf(" Your Viche ID is %s.", agentID)
+			if e.State.VicheID != "" {
+				return fmt.Sprintf(" Your Viche ID is %s.", e.State.VicheID)
 			}
 			return ""
 		}(),
@@ -426,7 +442,7 @@ Your initial plan was:
 	}
 
 	// ── Cleanup ──
-	if agentID != "" && e.vicheTools != nil && e.vicheTools.Channel != nil {
+	if e.State.VicheID != "" && e.vicheTools != nil && e.vicheTools.Channel != nil {
 		e.vicheTools.Channel.Close()
 	}
 	e.appendLog("\n> Agent stopped.\n")
@@ -476,6 +492,10 @@ func (e *AgentEngine) ListTasks() string {
 }
 
 func (e *AgentEngine) processMessage(content string) {
+	if e.collector != nil {
+		e.collector.StartActive()
+		defer e.collector.StopActive()
+	}
 	e.setState("flying")
 	e.appendLog("\n[Thinking]\n")
 
@@ -636,7 +656,7 @@ func (e *AgentEngine) runWithTools() string {
 				result = e.taskTools.Execute(call)
 			case "list_agents", "create_agent", "validate_agent", "explain_agent",
 				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config",
-				"query_logs", "query_metrics", "compare_versions":
+				"query_logs", "query_metrics", "compare_versions", "list_models":
 				if e.metaTools != nil {
 					result = e.metaTools.Execute(call)
 				} else {
@@ -653,8 +673,7 @@ func (e *AgentEngine) runWithTools() string {
 			e.logDebug(fmt.Sprintf("> Result: %s\n", result))
 
 			outcome := "Success"
-			lowerResult := strings.ToLower(result)
-			if strings.Contains(lowerResult, "error") || strings.Contains(lowerResult, "failed") || strings.Contains(lowerResult, "unknown tool") {
+			if strings.HasPrefix(result, "Error") || strings.HasPrefix(result, "Unknown tool:") {
 				outcome = "Failed"
 			}
 			if e.collector != nil {
@@ -773,6 +792,10 @@ func writeAgentMetricsMD(agentName, scope string, m *metrics.RunMetrics) {
 	if m.DurationMS > 0 {
 		dur = fmt.Sprintf("%.1fs", float64(m.DurationMS)/1000)
 	}
+	activeDur := ""
+	if m.ActiveDurationMS > 0 {
+		activeDur = fmt.Sprintf(" (active: %.1fs)", float64(m.ActiveDurationMS)/1000)
+	}
 	cost := ""
 	if m.EstimatedCost > 0 {
 		cost = fmt.Sprintf(" (~$%.4f)", m.EstimatedCost)
@@ -784,7 +807,7 @@ func writeAgentMetricsMD(agentName, scope string, m *metrics.RunMetrics) {
 **Run ID:** %s
 **Status:** %s
 **Model:** %s
-**Duration:** %s%s
+**Duration:** %s%s%s
 
 ## Token Usage
 - Input: %d
@@ -807,6 +830,7 @@ func writeAgentMetricsMD(agentName, scope string, m *metrics.RunMetrics) {
 		m.Status,
 		m.Model,
 		dur,
+		activeDur,
 		cost,
 		m.TokenInput,
 		m.TokenOutput,

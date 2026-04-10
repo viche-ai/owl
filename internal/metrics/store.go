@@ -120,14 +120,15 @@ type PromptVersionStats struct {
 
 // AgentMetricsSummary is the aggregate view for a single agent.
 type AgentMetricsSummary struct {
-	AgentName      string               `json:"agent_name"`
-	TotalRuns      int                  `json:"total_runs"`
-	SuccessRate    float64              `json:"success_rate"`
-	AvgDurationMS  int64                `json:"avg_duration_ms"`
-	AvgTokensIn    int                  `json:"avg_tokens_in"`
-	AvgTokensOut   int                  `json:"avg_tokens_out"`
-	TotalCost      float64              `json:"total_cost"`
-	PromptVersions []PromptVersionStats `json:"prompt_versions,omitempty"`
+	AgentName          string               `json:"agent_name"`
+	TotalRuns          int                  `json:"total_runs"`
+	SuccessRate        float64              `json:"success_rate"`
+	AvgDurationMS      int64                `json:"avg_duration_ms"`
+	AvgActiveDurationMS int64               `json:"avg_active_duration_ms"`
+	AvgTokensIn        int                  `json:"avg_tokens_in"`
+	AvgTokensOut       int                  `json:"avg_tokens_out"`
+	TotalCost          float64              `json:"total_cost"`
+	PromptVersions     []PromptVersionStats `json:"prompt_versions,omitempty"`
 }
 
 // Aggregate returns aggregate statistics for a named agent across all stored runs.
@@ -143,7 +144,7 @@ func (s *Store) Aggregate(agentName string) (*AgentMetricsSummary, error) {
 	summary := &AgentMetricsSummary{AgentName: agentName, TotalRuns: len(records)}
 
 	var successCount int
-	var totalDuration int64
+	var totalDuration, totalActiveDuration int64
 	var totalIn, totalOut int
 	promptStats := make(map[string]*PromptVersionStats)
 
@@ -152,6 +153,7 @@ func (s *Store) Aggregate(agentName string) (*AgentMetricsSummary, error) {
 			successCount++
 		}
 		totalDuration += m.DurationMS
+		totalActiveDuration += m.ActiveDurationMS
 		totalIn += m.TokenInput
 		totalOut += m.TokenOutput
 		summary.TotalCost += m.EstimatedCost
@@ -173,6 +175,7 @@ func (s *Store) Aggregate(agentName string) (*AgentMetricsSummary, error) {
 
 	summary.SuccessRate = float64(successCount) / float64(len(records))
 	summary.AvgDurationMS = totalDuration / int64(len(records))
+	summary.AvgActiveDurationMS = totalActiveDuration / int64(len(records))
 	summary.AvgTokensIn = totalIn / len(records)
 	summary.AvgTokensOut = totalOut / len(records)
 
@@ -209,13 +212,17 @@ func (s *Store) QueryMetrics(agentName string, since time.Time) (string, error) 
 	for _, m := range records {
 		dur := ""
 		if m.DurationMS > 0 {
-			dur = fmt.Sprintf(", %.1fs", float64(m.DurationMS)/1000)
+			dur = fmt.Sprintf(", wall=%.1fs", float64(m.DurationMS)/1000)
+		}
+		activeDur := ""
+		if m.ActiveDurationMS > 0 {
+			activeDur = fmt.Sprintf(", active=%.1fs", float64(m.ActiveDurationMS)/1000)
 		}
 		cost := ""
 		if m.EstimatedCost > 0 {
 			cost = fmt.Sprintf(", ~$%.4f", m.EstimatedCost)
 		}
-		lines = append(lines, fmt.Sprintf("  [%s] %s (%s) model=%s tokens=%d/%d tools=%d/%d%s%s",
+		lines = append(lines, fmt.Sprintf("  [%s] %s (%s) model=%s tokens=%d/%d tools=%d/%d%s%s%s",
 			m.StartTS.Format("2006-01-02 15:04"),
 			m.RunID,
 			m.Status,
@@ -225,6 +232,7 @@ func (s *Store) QueryMetrics(agentName string, since time.Time) (string, error) 
 			m.ToolCallCount,
 			m.ToolFailCount,
 			dur,
+			activeDur,
 			cost,
 		))
 	}
@@ -244,8 +252,12 @@ func (s *Store) CompareVersions(agentName string) (string, error) {
 	var lines []string
 	lines = append(lines, fmt.Sprintf("Prompt version comparison for %q (%d total runs, %.0f%% success rate overall):",
 		agentName, summary.TotalRuns, summary.SuccessRate*100))
-	lines = append(lines, fmt.Sprintf("Avg duration: %.1fs | Avg tokens: %d in / %d out | Total cost: ~$%.4f",
-		float64(summary.AvgDurationMS)/1000, summary.AvgTokensIn, summary.AvgTokensOut, summary.TotalCost))
+	activeDur := ""
+	if summary.AvgActiveDurationMS > 0 {
+		activeDur = fmt.Sprintf(" (active: %.1fs)", float64(summary.AvgActiveDurationMS)/1000)
+	}
+	lines = append(lines, fmt.Sprintf("Avg duration: %.1fs%s | Avg tokens: %d in / %d out | Total cost: ~$%.4f",
+		float64(summary.AvgDurationMS)/1000, activeDur, summary.AvgTokensIn, summary.AvgTokensOut, summary.TotalCost))
 	lines = append(lines, "")
 	lines = append(lines, "Prompt versions (by run count):")
 	for _, pv := range summary.PromptVersions {

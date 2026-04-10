@@ -222,6 +222,9 @@ func (s *Service) Hatch(args *HatchArgs, reply *HatchReply) error {
 
 	name := args.Name
 	if name == "" {
+		name = args.Agent
+	}
+	if name == "" {
 		name = args.Description
 	}
 

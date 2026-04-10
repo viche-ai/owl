@@ -101,6 +101,13 @@ var hatchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Default WorkDir to client's cwd so the daemon resolves
+		// agent definitions and project config from the right directory.
+		workDir := dirFlag
+		if workDir == "" {
+			workDir, _ = os.Getwd()
+		}
+
 		hatchArgs := ipc.HatchArgs{
 			Description: desc,
 			ModelID:     modelFlag,
@@ -112,7 +119,7 @@ var hatchCmd = &cobra.Command{
 			Effort:      effortFlag,
 			Name:        nameFlag,
 			Ambient:     ambientFlag,
-			WorkDir:     dirFlag,
+			WorkDir:     workDir,
 			Harness:     harnessFlag,
 			HarnessArgs: harnessArgsFlag,
 			NoNetInject: noNetInjectFlag,
@@ -180,8 +187,8 @@ var hatchCmd = &cobra.Command{
 			}
 		}
 
-		if hatchArgs.Description == "" {
-			fmt.Fprintln(os.Stderr, "Error: description is required")
+		if hatchArgs.Description == "" && agentFlag == "" {
+			fmt.Fprintln(os.Stderr, "Error: description is required (or use --agent <name>)")
 			os.Exit(1)
 		}
 

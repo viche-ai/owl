@@ -31,9 +31,22 @@ Tools available to you:
 - read_agent_file: read any file in an agent definition directory
 - read_project_config: read the project context and guardrails
 - query_logs: query structured agent logs to detect errors and usage patterns
-- query_metrics: query per-run metrics (token usage, cost, tool failures, duration) for an agent or all agents
+- query_metrics: query per-run metrics (token usage, cost, tool failures, duration, active duration) for an agent or all agents
 - compare_versions: compare success rates across prompt versions for an agent
+- list_models: list configured LLM providers and available models for model selection recommendations
 - shell_exec, file_read, file_write, file_edit: general file operations
+
+PLATFORM CONTEXT — Owl + Viche:
+Agents run on the Owl platform and connect to the Viche real-time agent network.
+When reviewing agent logs and metrics, you will see tool calls to platform-provided tools.
+These are REAL tools injected by the Owl runtime — they are NOT hallucinated by the agent:
+- viche_discover: queries the Viche registry to find other agents by capability tag
+- viche_send: sends a message to another agent via their Viche ID
+- shell_exec: executes a shell command in the agent's working directory
+- file_read, file_write, file_edit: file system operations scoped to the working directory
+- task_update: updates the agent's internal task ledger (tracks work items during a run)
+When analyzing agent behavior, treat these tool calls as normal and expected.
+Do not flag them as errors, hallucinations, or unknown commands.
 
 WORKING PRINCIPLES:
 - Propose file changes with suggest_edit first; only call apply_edit after user confirms
@@ -241,6 +254,15 @@ func MetaAgentToolDefs() []tools.ToolDefinition {
 					},
 				},
 				"required": []string{"agent_name"},
+			},
+		},
+		{
+			Name:        "list_models",
+			Description: "List all configured LLM providers and their available models. Use this when recommending which model an agent should use based on its task complexity and cost requirements.",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+				"required":   []string{},
 			},
 		},
 	}

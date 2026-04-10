@@ -7,33 +7,36 @@ import (
 
 // RunMetrics captures telemetry for a single run.
 type RunMetrics struct {
-	RunID          string     `json:"run_id"`
-	AgentName      string     `json:"agent_name"`
-	AgentVersion   string     `json:"agent_version,omitempty"`
-	PromptHash     string     `json:"prompt_hash"`
-	Model          string     `json:"model"`
-	Adapter        string     `json:"adapter"`
-	Workspace      string     `json:"workspace"`
-	StartTS        time.Time  `json:"start_ts"`
-	EndTS          *time.Time `json:"end_ts,omitempty"`
-	DurationMS     int64      `json:"duration_ms,omitempty"`
-	Status         string     `json:"status"` // running, completed, failed, stopped
-	RetryCount     int        `json:"retry_count"`
-	BlockedCount   int        `json:"blocked_count"`
-	HandoffCount   int        `json:"handoff_count"`
-	TokenInput     int        `json:"token_input"`
-	TokenOutput    int        `json:"token_output"`
-	EstimatedCost  float64    `json:"estimated_cost,omitempty"`
-	ToolCallCount  int        `json:"tool_call_count"`
-	ToolFailCount  int        `json:"tool_fail_count"`
-	TasksCreated   int        `json:"tasks_created"`
-	TasksCompleted int        `json:"tasks_completed"`
+	RunID            string     `json:"run_id"`
+	AgentName        string     `json:"agent_name"`
+	AgentVersion     string     `json:"agent_version,omitempty"`
+	PromptHash       string     `json:"prompt_hash"`
+	Model            string     `json:"model"`
+	Adapter          string     `json:"adapter"`
+	Workspace        string     `json:"workspace"`
+	StartTS          time.Time  `json:"start_ts"`
+	EndTS            *time.Time `json:"end_ts,omitempty"`
+	DurationMS       int64      `json:"duration_ms,omitempty"`
+	ActiveDurationMS int64      `json:"active_duration_ms,omitempty"` // time actually processing (excludes idle wait)
+	Status           string     `json:"status"`                       // running, completed, failed, stopped
+	RetryCount       int        `json:"retry_count"`
+	BlockedCount     int        `json:"blocked_count"`
+	HandoffCount     int        `json:"handoff_count"`
+	TokenInput       int        `json:"token_input"`
+	TokenOutput      int        `json:"token_output"`
+	EstimatedCost    float64    `json:"estimated_cost,omitempty"`
+	ToolCallCount    int        `json:"tool_call_count"`
+	ToolFailCount    int        `json:"tool_fail_count"`
+	TasksCreated     int        `json:"tasks_created"`
+	TasksCompleted   int        `json:"tasks_completed"`
 }
 
 // Collector accumulates metrics during a run.
 type Collector struct {
-	mu      sync.Mutex
-	metrics RunMetrics
+	mu             sync.Mutex
+	metrics        RunMetrics
+	activeStart    time.Time // when current active span began (zero if idle)
+	activeDuration time.Duration
 }
 
 // NewCollector initialises a Collector for the given run.
@@ -118,6 +121,25 @@ func (c *Collector) RecordTaskCompleted() {
 	c.metrics.TasksCompleted++
 }
 
+// StartActive marks the beginning of an active processing span.
+// Call this when the agent starts processing a message.
+func (c *Collector) StartActive() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activeStart = time.Now()
+}
+
+// StopActive marks the end of an active processing span and accumulates the duration.
+// Call this when the agent finishes processing a message and returns to idle.
+func (c *Collector) StopActive() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.activeStart.IsZero() {
+		c.activeDuration += time.Since(c.activeStart)
+		c.activeStart = time.Time{}
+	}
+}
+
 // Snapshot returns the current metrics state without finalising.
 func (c *Collector) Snapshot() RunMetrics {
 	c.mu.Lock()
@@ -135,6 +157,12 @@ func (c *Collector) Finalize(status string) *RunMetrics {
 	c.metrics.DurationMS = now.Sub(c.metrics.StartTS).Milliseconds()
 	c.metrics.Status = status
 	c.metrics.EstimatedCost = EstimateCost(c.metrics.Model, c.metrics.TokenInput, c.metrics.TokenOutput)
+	// Flush any in-progress active span
+	if !c.activeStart.IsZero() {
+		c.activeDuration += now.Sub(c.activeStart)
+		c.activeStart = time.Time{}
+	}
+	c.metrics.ActiveDurationMS = c.activeDuration.Milliseconds()
 	copy := c.metrics
 	return &copy
 }
