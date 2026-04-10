@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"github.com/viche-ai/owl/internal/demos"
 )
 
 var projectCmd = &cobra.Command{
@@ -18,6 +19,8 @@ var projectCmd = &cobra.Command{
 	Short:   "Manage project-level configuration",
 }
 
+var demoFlag string
+
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a local Owl project in the current directory",
@@ -25,6 +28,11 @@ var initCmd = &cobra.Command{
 }
 
 func runProjectInit(cmd *cobra.Command, args []string) {
+	if demoFlag != "" {
+		runDemoInit(demoFlag)
+		return
+	}
+
 	owlDir := ".owl"
 	projectFile := filepath.Join(owlDir, "project.json")
 
@@ -64,7 +72,38 @@ func runProjectInit(cmd *cobra.Command, args []string) {
 	fmt.Printf("  Templates directory: %s/\n", templatesDir)
 }
 
-var agentsCmd = &cobra.Command{
+func runDemoInit(name string) {
+	projectFile := filepath.Join(".owl", "project.json")
+	if _, err := os.Stat(projectFile); err == nil {
+		fmt.Println("Owl project already initialized in this directory.")
+		fmt.Printf("Project file: %s\n", projectFile)
+		os.Exit(1)
+	}
+
+	if err := demos.Scaffold(name, "."); err != nil {
+		fmt.Printf("Error scaffolding demo %q: %v\n", name, err)
+		fmt.Printf("Available demos: %s\n", strings.Join(demos.Available(), ", "))
+		os.Exit(1)
+	}
+
+	fmt.Printf("✓ Demo %q scaffolded\n", name)
+	fmt.Println()
+	fmt.Println("  Files created:")
+	fmt.Println("    tracker.py              — the buggy code")
+	fmt.Println("    SPEC.md                 — what the code should do")
+	fmt.Println("    .owl/project.json       — project config")
+	fmt.Println("    .owl/agents/scout/      — finds bugs by comparing code to spec")
+	fmt.Println("    .owl/agents/fixer/      — patches each bug the scout found")
+	fmt.Println("    .owl/agents/verifier/   — confirms the fixes against the spec")
+	fmt.Println()
+	fmt.Println("  Next: open the TUI (owl) in another terminal, then:")
+	fmt.Println()
+	fmt.Println("    owl hatch --agent fixer --ambient")
+	fmt.Println("    owl hatch --agent verifier --ambient")
+	fmt.Println("    owl hatch --agent scout \"Analyze tracker.py against SPEC.md. Find every bug.\"")
+}
+
+var projectAgentsCmd = &cobra.Command{
 	Use:   "agents",
 	Short: "Describe agent functionality and create AGENTS.md for the project",
 	Run:   runAgentsCmd,
@@ -461,8 +500,9 @@ func runTemplatesDelete(cmd *cobra.Command, args []string) {
 }
 
 func init() {
+	initCmd.Flags().StringVar(&demoFlag, "demo", "", "Scaffold a demo project (e.g. bug-hunt)")
 	projectCmd.AddCommand(initCmd)
-	projectCmd.AddCommand(agentsCmd)
+	projectCmd.AddCommand(projectAgentsCmd)
 	projectCmd.AddCommand(guardsCmd)
 	projectCmd.AddCommand(templatesCmd)
 	templatesCmd.AddCommand(templatesListCmd)

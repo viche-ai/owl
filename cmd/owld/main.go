@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/viche-ai/owl/internal/engine"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
+	"github.com/viche-ai/owl/internal/metrics"
 )
 
 const SocketPath = "/tmp/owld.sock"
@@ -45,14 +47,36 @@ func main() {
 
 	daemon := ipc.NewService()
 
-	ipc.RunEngineHook = func(state *ipc.AgentState, mu func(func()), args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+	metricStore, err := metrics.NewStore()
+	if err != nil {
+		log.Println("Warning: could not initialise metrics store:", err)
+	}
+
+	ipc.RunEngineHook = func(ctx context.Context, state *ipc.AgentState, mu func(func()), args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 		eng := &engine.AgentEngine{
-			State:  state,
-			Cfg:    cfg,
-			Mu:     mu,
-			Router: router,
+			State:       state,
+			Cfg:         cfg,
+			Mu:          mu,
+			Router:      router,
+			RunStore:    daemon.RunStore,
+			MetricStore: metricStore,
 		}
-		eng.Run(args, inbox)
+		eng.Run(ctx, args, inbox)
+	}
+
+	// Auto-hatch the Owl meta-agent at index 0. It serves as the primary
+	// user interface in the TUI console tab and handles agent management.
+	workDir, _ := os.Getwd()
+	var metaReply ipc.HatchReply
+	if err := daemon.Hatch(&ipc.HatchArgs{
+		Name:      "owl",
+		Ambient:   true,
+		MetaAgent: true,
+		WorkDir:   workDir,
+	}, &metaReply); err != nil {
+		log.Println("Warning: failed to hatch meta-agent:", err)
+	} else {
+		log.Println("Meta-agent hatched:", metaReply.Message)
 	}
 
 	err = rpc.RegisterName("Daemon", daemon)

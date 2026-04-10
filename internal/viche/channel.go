@@ -28,6 +28,7 @@ type Channel struct {
 	agentID string
 	token   string
 	baseURL string
+	topic   string
 	writeMu sync.Mutex
 	ref     int64
 
@@ -44,6 +45,7 @@ func NewChannel(baseURL, agentID, token string) *Channel {
 		agentID: agentID,
 		token:   token,
 		baseURL: baseURL,
+		topic:   "agent:" + agentID,
 		pending: make(map[string]*pendingReply),
 		joined:  make(chan struct{}),
 	}
@@ -70,7 +72,7 @@ func (c *Channel) writeMsg(msg phoenixMsg) error {
 	return c.conn.WriteMessage(websocket.TextMessage, b)
 }
 
-// Connect dials the WebSocket, joins the agent channel, and waits for confirmation.
+// Connect dials the WebSocket, joins the agent channel, and joins registry channels.
 func (c *Channel) Connect() error {
 	u, err := url.Parse(c.wsURL())
 	if err != nil {
@@ -90,17 +92,10 @@ func (c *Channel) Connect() error {
 	// Start reader FIRST so we can catch the join reply
 	go c.readLoop()
 
-	// Send join
+	// Join agent:{agentId} channel per spec
 	c.joinRef = fmt.Sprintf("%d", rand.Intn(10000))
-	joinRef := c.joinRef
-	joinTopic := "agent:" + c.agentID
-	if err := c.writeMsg(newPhoenixMsg(joinRef, c.nextRef(), joinTopic, "phx_join", map[string]interface{}{})); err != nil {
+	if err := c.writeMsg(newPhoenixMsg(c.joinRef, c.nextRef(), c.topic, "phx_join", map[string]interface{}{})); err != nil {
 		return fmt.Errorf("channel join write failed: %w", err)
-	}
-
-	// Also join registry channel if token set
-	if c.token != "" {
-		_ = c.writeMsg(newPhoenixMsg(joinRef, c.nextRef(), "registry:"+c.token, "phx_join", map[string]interface{}{}))
 	}
 
 	// Start heartbeat
@@ -109,10 +104,16 @@ func (c *Channel) Connect() error {
 	// Wait for join confirmation (or timeout)
 	select {
 	case <-c.joined:
-		return nil
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("channel join timeout")
 	}
+
+	// Join registry channel for scoped discovery
+	if c.token != "" {
+		_ = c.writeMsg(newPhoenixMsg(c.joinRef, c.nextRef(), "registry:"+c.token, "phx_join", map[string]interface{}{}))
+	}
+
+	return nil
 }
 
 // Push sends an event on the agent channel and waits for a reply.
@@ -137,8 +138,7 @@ func (c *Channel) Push(event string, payload map[string]interface{}) (map[string
 		c.pendingMu.Unlock()
 	}()
 
-	topic := "agent:" + c.agentID
-	if err := c.writeMsg(newPhoenixMsg(c.joinRef, ref, topic, event, payload)); err != nil {
+	if err := c.writeMsg(newPhoenixMsg(c.joinRef, ref, c.topic, event, payload)); err != nil {
 		return nil, err
 	}
 
@@ -191,7 +191,7 @@ func (c *Channel) readLoop() {
 
 			// Check if this is the join reply
 			topic, _ := msg[2].(string)
-			if topic == "agent:"+c.agentID && status == "ok" {
+			if topic == c.topic && status == "ok" {
 				select {
 				case <-c.joined:
 					// already closed

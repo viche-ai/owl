@@ -1,0 +1,6 @@
+name: verifier
+version: "1.0.0"
+description: Verifies fixes against the original specification
+capabilities:
+  - verification
+  - testing

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,50 +10,84 @@ import (
 	"strings"
 	"time"
 
+	"github.com/viche-ai/owl/internal/agents"
 	"github.com/viche-ai/owl/internal/config"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
+	"github.com/viche-ai/owl/internal/logs"
+	"github.com/viche-ai/owl/internal/metrics"
+	"github.com/viche-ai/owl/internal/runs"
 	"github.com/viche-ai/owl/internal/tools"
 	"github.com/viche-ai/owl/internal/viche"
 )
 
 type AgentEngine struct {
-	State  *ipc.AgentState
-	Cfg    *config.Config
-	Mu     func(func())
-	Router *llm.Router
+	State       *ipc.AgentState
+	Cfg         *config.Config
+	Mu          func(func())
+	Router      *llm.Router
+	RunStore    *runs.Store    // optional; persists state transitions to disk
+	MetricStore *metrics.Store // optional; persists run metrics to disk
 
-	logFile     *os.File
+	logWriter   *logs.Writer
+	collector   *metrics.Collector
+	runCtx      context.Context // cancellable context for the current run
 	messages    []llm.Message
 	provider    llm.Provider
 	model       string
 	vicheTools  *tools.VicheTools
 	systemTools *tools.SystemTools
 	taskTools   *tools.TaskTools
+	metaTools   *tools.MetaTools
 	taskLedger  *TaskLedger
 	toolDefs    []llm.ToolDef
 }
 
-func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
-	// Open log file
+func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+	e.runCtx = ctx
+
+	// Open structured log file
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".owl", "logs")
-	_ = os.MkdirAll(logDir, 0755)
 
-	// Use a temporary name for the log file until we scaffold the real name
-	tempName := sanitizeName(args.Description)
-	logPath := filepath.Join(logDir, fmt.Sprintf("agent-%s-%d.log", tempName, time.Now().Unix()))
-	if f, err := os.Create(logPath); err == nil {
-		e.logFile = f
-		defer func() { _ = f.Close() }()
+	runID := e.State.RunID
+	if runID == "" {
+		runID = logs.GenerateRunID(sanitizeName(args.Description))
 	}
+
+	var logPath string
+	if w, path, err := logs.NewWriter(logDir, runID, e.State.Name, e.State.ID, args.ModelID); err == nil {
+		e.logWriter = w
+		logPath = path
+		defer func() { _ = e.logWriter.Close() }()
+	}
+
+	// Update persisted RunRecord with resolved log path
+	if e.RunStore != nil {
+		if rec, err := e.RunStore.Load(runID); err == nil {
+			rec.LogPath = logPath
+			rec.State = "hatching"
+			_ = e.RunStore.Save(rec)
+		}
+	}
+
+	// Initialise metrics collector for this run
+	adapterName := ""
+	if parts := strings.SplitN(args.ModelID, "/", 2); len(parts) == 2 {
+		adapterName = parts[0]
+	}
+	workspaceForMetrics := args.WorkDir
+	if workspaceForMetrics == "" {
+		workspaceForMetrics, _ = os.Getwd()
+	}
+	e.collector = metrics.NewCollector(runID, e.State.Name, args.ModelID, adapterName, workspaceForMetrics)
 
 	e.appendLog("> Booting agent engine...\n")
 	e.appendLog(fmt.Sprintf("> Log: %s\n", logPath))
 	time.Sleep(200 * time.Millisecond)
 
 	if args.Harness != "" {
-		e.runHarness(args, inbox)
+		e.runHarness(ctx, args, inbox)
 		return
 	}
 
@@ -107,11 +142,67 @@ func (e *AgentEngine) Run(args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 
 	e.appendLog(fmt.Sprintf("> Model: %s/%s\n\n", provider.Name(), model))
 
-	// ── Step 2: Scaffolding (Hatching) ──
-	e.setState("hatching")
-	e.appendLog("[Thinking]\nScaffolding agent identity...\n")
+	// ── Meta-agent fast path ──
+	// Skip scaffolding, Viche, and task ledger. Use fixed identity + meta tools.
+	if args.MetaAgent {
+		e.runMetaAgent(args, inbox)
+		return
+	}
 
-	scaffoldPrompt := fmt.Sprintf(`You are an AI agent being initialized.
+	// ── Step 2: Resolve agent definition (before scaffolding) ──
+	workDir := args.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+
+	var agentDef *agents.AgentDefinition
+	if args.Agent != "" {
+		agentResolver := agents.NewResolver(workDir)
+		e.appendLog(fmt.Sprintf("> Resolving agent definition %q (scope=%q, workdir=%s)\n", args.Agent, args.Scope, workDir))
+		if def, err := agentResolver.Resolve(args.Agent, args.Scope); err == nil {
+			agentDef = def
+			e.appendLog(fmt.Sprintf("> Loaded agent definition %q from %s scope (%s)\n", def.Name, def.Scope, def.SourcePath))
+			if def.AgentsMD != "" {
+				e.appendLog(fmt.Sprintf("> AGENTS.md loaded (%d bytes)\n", len(def.AgentsMD)))
+			}
+			if def.RoleMD != "" {
+				e.appendLog(fmt.Sprintf("> role.md loaded (%d bytes)\n", len(def.RoleMD)))
+			}
+			if def.GuardrailsMD != "" {
+				e.appendLog(fmt.Sprintf("> guardrails.md loaded (%d bytes)\n", len(def.GuardrailsMD)))
+			}
+		} else {
+			e.appendLog(fmt.Sprintf("[Warning] Could not load agent definition %q: %v\n", args.Agent, err))
+		}
+	}
+
+	// ── Step 3: Scaffolding (Hatching) ──
+	e.setState("hatching")
+
+	type ScaffoldResult struct {
+		Name         string   `json:"name"`
+		Capabilities []string `json:"capabilities"`
+		Plan         any      `json:"plan"`
+	}
+
+	var identity ScaffoldResult
+	var planText string
+
+	if agentDef != nil {
+		// Agent definition provides identity — skip LLM scaffolding
+		e.appendLog(fmt.Sprintf("> Using agent definition %q for identity (skipping LLM scaffold)\n", agentDef.Name))
+		identity.Name = agentDef.Name
+		identity.Capabilities = agentDef.Capabilities
+		if agentDef.Description != "" {
+			planText = agentDef.Description
+		} else {
+			planText = "Agent identity loaded from definition"
+		}
+	} else {
+		// No agent definition — scaffold identity via LLM
+		e.appendLog("[Thinking]\nScaffolding agent identity...\n")
+
+		scaffoldPrompt := fmt.Sprintf(`You are an AI agent being initialized.
 Your purpose based on user request: %s
 
 You will be connected to the Viche agent network. You need an identity.
@@ -123,64 +214,52 @@ Please output a JSON block with the following structure:
 }
 Output ONLY valid JSON.`, args.Description)
 
-	e.messages = []llm.Message{
-		{Role: llm.RoleSystem, Content: scaffoldPrompt},
-		{Role: llm.RoleUser, Content: "Initialize. What is your plan?"},
-	}
-
-	scaffoldResponse := e.runWithTools()
-	if scaffoldResponse == "" {
-		return
-	}
-
-	// Attempt to parse JSON from scaffold response
-	type ScaffoldResult struct {
-		Name         string   `json:"name"`
-		Capabilities []string `json:"capabilities"`
-		Plan         any      `json:"plan"`
-	}
-
-	var identity ScaffoldResult
-
-	// simple json extraction if wrapped in code blocks
-	jsonStr := scaffoldResponse
-	if start := strings.Index(jsonStr, "{"); start != -1 {
-		if end := strings.LastIndex(jsonStr, "}"); end != -1 {
-			jsonStr = jsonStr[start : end+1]
+		e.messages = []llm.Message{
+			{Role: llm.RoleSystem, Content: scaffoldPrompt},
+			{Role: llm.RoleUser, Content: "Initialize. What is your plan?"},
 		}
-	}
 
-	var planText string
-	if err := json.Unmarshal([]byte(jsonStr), &identity); err != nil {
-		e.appendLog(fmt.Sprintf("[Warning] Failed to parse scaffolding JSON: %v\n", err))
-		// Fallbacks
-		identity.Name = sanitizeName(args.Description)
-		if len(identity.Name) == 0 {
-			identity.Name = "owl-agent"
+		scaffoldResponse := e.runWithTools()
+		if scaffoldResponse == "" {
+			return
 		}
-		identity.Capabilities = []string{"owl-agent"}
-		planText = scaffoldResponse // just dump the text
-	} else {
-		// Plan could be an array of strings or a single string
-		if pArr, ok := identity.Plan.([]interface{}); ok {
-			var lines []string
-			for _, item := range pArr {
-				if s, ok := item.(string); ok {
-					lines = append(lines, "- "+s)
-				}
+
+		// simple json extraction if wrapped in code blocks
+		jsonStr := scaffoldResponse
+		if start := strings.Index(jsonStr, "{"); start != -1 {
+			if end := strings.LastIndex(jsonStr, "}"); end != -1 {
+				jsonStr = jsonStr[start : end+1]
 			}
-			planText = strings.Join(lines, "\n")
-		} else if pStr, ok := identity.Plan.(string); ok {
-			planText = pStr
+		}
+
+		if err := json.Unmarshal([]byte(jsonStr), &identity); err != nil {
+			e.appendLog(fmt.Sprintf("[Warning] Failed to parse scaffolding JSON: %v\n", err))
+			identity.Name = sanitizeName(args.Description)
+			if len(identity.Name) == 0 {
+				identity.Name = "owl-agent"
+			}
+			identity.Capabilities = []string{"owl-agent"}
+			planText = scaffoldResponse
 		} else {
-			planText = fmt.Sprintf("%v", identity.Plan)
+			if pArr, ok := identity.Plan.([]interface{}); ok {
+				var lines []string
+				for _, item := range pArr {
+					if s, ok := item.(string); ok {
+						lines = append(lines, "- "+s)
+					}
+				}
+				planText = strings.Join(lines, "\n")
+			} else if pStr, ok := identity.Plan.(string); ok {
+				planText = pStr
+			} else {
+				planText = fmt.Sprintf("%v", identity.Plan)
+			}
 		}
 	}
 
 	if len(identity.Capabilities) == 0 {
 		identity.Capabilities = []string{"owl-agent"}
 	} else {
-		// Always ensure 'owl-agent' is present so they can be discovered generally
 		hasOwl := false
 		for _, cap := range identity.Capabilities {
 			if cap == "owl-agent" {
@@ -193,7 +272,6 @@ Output ONLY valid JSON.`, args.Description)
 		}
 	}
 
-	// Rename if args.Name was explicitly provided
 	if args.Name != "" {
 		identity.Name = args.Name
 	}
@@ -236,15 +314,10 @@ Output ONLY valid JSON.`, args.Description)
 		ch := viche.NewChannel(vc.BaseURL(), agentID, vc.Token())
 
 		ch.OnMessage = func(msg viche.InboxMessage) {
-			// Do not process messages that are results/acknowledgements to prevent infinite loops
 			if msg.Type == "result" {
-				// Simply append them to the UI logs so the user sees it, but do NOT
-				// feed it into the agent's LLM inbox to trigger a response
 				e.appendLog(fmt.Sprintf("\n> [Viche result from %s] %s\n", msg.From, msg.Body))
 				return
 			}
-
-			// Route incoming Viche messages into the agent's main inbox to ensure sequential processing
 			inbox <- ipc.InboundMessage{
 				From:    msg.From,
 				Content: fmt.Sprintf("[Message from agent %s]: %s", msg.From, msg.Body),
@@ -256,7 +329,6 @@ Output ONLY valid JSON.`, args.Description)
 		} else {
 			e.appendLog("> Connected via WebSocket.\n")
 
-			// Set up Viche tools for this agent
 			e.vicheTools = &tools.VicheTools{Channel: ch, AgentID: agentID}
 			for _, def := range e.vicheTools.Definitions() {
 				e.toolDefs = append(e.toolDefs, llm.ToolDef{
@@ -265,16 +337,12 @@ Output ONLY valid JSON.`, args.Description)
 					Parameters:  def.Parameters,
 				})
 			}
-			e.appendLog(fmt.Sprintf("> %d Viche tools available: viche_discover, viche_send\n", len(e.toolDefs)))
+			e.appendLog(fmt.Sprintf("> %d Viche tools available: viche_discover, viche_send\n", len(e.vicheTools.Definitions())))
 		}
 		e.appendLog("\n")
 	}
 
 	// ── Step 3b: System tools (shell, file read/write/edit) ──
-	workDir := args.WorkDir
-	if workDir == "" {
-		workDir, _ = os.Getwd()
-	}
 	e.systemTools = &tools.SystemTools{WorkDir: workDir}
 	for _, def := range e.systemTools.Definitions() {
 		e.toolDefs = append(e.toolDefs, llm.ToolDef{
@@ -300,29 +368,11 @@ Output ONLY valid JSON.`, args.Description)
 	// ── Step 4: Setup main system prompt ──
 	projectCfg, _ := config.LoadProjectConfig(workDir)
 
-	globalPrompt := e.Cfg.SystemPrompt
-	if globalPrompt == "" {
-		globalPrompt = config.DefaultSystemPrompt()
-	}
+	promptStack := agents.BuildPromptStack(agentDef, e.Cfg, projectCfg, "")
 
 	var promptBuilder strings.Builder
-	promptBuilder.WriteString("[GLOBAL]\n")
-	promptBuilder.WriteString(globalPrompt)
+	promptBuilder.WriteString(promptStack.Render())
 	promptBuilder.WriteString("\n\n")
-
-	if projectCfg.Context != "" {
-		promptBuilder.WriteString("[PROJECT CONTEXT]\n")
-		promptBuilder.WriteString(projectCfg.Context)
-		promptBuilder.WriteString("\n\n")
-	}
-
-	if len(projectCfg.Guardrails) > 0 {
-		promptBuilder.WriteString("[PROJECT GUARDRAILS]\nCRITICAL GUARDRAILS:\n")
-		for _, g := range projectCfg.Guardrails {
-			promptBuilder.WriteString("- " + g + "\n")
-		}
-		promptBuilder.WriteString("\n")
-	}
 
 	fmt.Fprintf(&promptBuilder, `[RUNTIME]
 You are an AI agent. Your identity: %s
@@ -350,14 +400,23 @@ Your initial plan was:
 		args.Description,
 		strings.Join(identity.Capabilities, ", "),
 		func() string {
-			if agentID != "" {
-				return fmt.Sprintf(" Your Viche ID is %s.", agentID)
+			if e.State.VicheID != "" {
+				return fmt.Sprintf(" Your Viche ID is %s.", e.State.VicheID)
 			}
 			return ""
 		}(),
 		planText)
 
 	systemPrompt := promptBuilder.String()
+
+	// Record prompt hash for metrics correlation
+	if e.collector != nil {
+		hash := sha256.Sum256([]byte(systemPrompt))
+		e.collector.SetPromptHash(fmt.Sprintf("%x", hash))
+		if agentDef != nil {
+			e.collector.SetAgentVersion(agentDef.Version)
+		}
+	}
 
 	e.messages = []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
@@ -383,11 +442,42 @@ Your initial plan was:
 	}
 
 	// ── Cleanup ──
-	if agentID != "" && e.vicheTools != nil && e.vicheTools.Channel != nil {
+	if e.State.VicheID != "" && e.vicheTools != nil && e.vicheTools.Channel != nil {
 		e.vicheTools.Channel.Close()
 	}
 	e.appendLog("\n> Agent stopped.\n")
 	e.setState("stopped")
+
+	// Finalise metrics and persist
+	if e.collector != nil {
+		status := "completed"
+		if ctx.Err() != nil {
+			status = "stopped"
+		}
+		m := e.collector.Finalize(status)
+		if e.MetricStore != nil {
+			_ = e.MetricStore.Save(m) // best-effort
+		}
+		// Write per-agent metrics.md if we know the agent name
+		if args.Agent != "" {
+			writeAgentMetricsMD(args.Agent, args.Scope, m)
+		}
+	}
+
+	// Persist final state
+	if e.RunStore != nil {
+		exitReason := "completed"
+		if ctx.Err() != nil {
+			exitReason = "force-stop"
+		}
+		if rec, err := e.RunStore.Load(runID); err == nil {
+			rec.State = "stopped"
+			rec.ExitReason = exitReason
+			now := time.Now()
+			rec.EndTime = &now
+			_ = e.RunStore.Save(rec)
+		}
+	}
 }
 
 // UpdateTaskStatus implements tools.TaskUpdater
@@ -402,23 +492,34 @@ func (e *AgentEngine) ListTasks() string {
 }
 
 func (e *AgentEngine) processMessage(content string) {
+	if e.collector != nil {
+		e.collector.StartActive()
+		defer e.collector.StopActive()
+	}
 	e.setState("flying")
 	e.appendLog("\n[Thinking]\n")
 
-	// Register inbound message as a new task
-	source := "user"
-	if strings.HasPrefix(content, "[Message from agent") {
-		parts := strings.SplitN(content, "]", 2)
-		if len(parts) > 0 {
-			source = strings.TrimPrefix(parts[0], "[Message from agent ")
+	var msgContent string
+	if e.taskLedger != nil {
+		// Register inbound message as a new task
+		source := "user"
+		if strings.HasPrefix(content, "[Message from agent") {
+			parts := strings.SplitN(content, "]", 2)
+			if len(parts) > 0 {
+				source = strings.TrimPrefix(parts[0], "[Message from agent ")
+			}
 		}
+		task := e.taskLedger.AddTask(truncate(content, 200), source)
+		if e.collector != nil {
+			e.collector.RecordTaskCreated()
+		}
+		msgContent = fmt.Sprintf("[TASK LEDGER]\n%s\n[END TASK LEDGER]\n\n[NEW MESSAGE (task %s)]\n%s",
+			e.taskLedger.ContextSummary(), task.ID, content)
+	} else {
+		msgContent = content
 	}
-	task := e.taskLedger.AddTask(truncate(content, 200), source)
 
-	// Inject task context into the message
-	taskContext := fmt.Sprintf("[TASK LEDGER]\n%s\n[END TASK LEDGER]\n\n[NEW MESSAGE (task %s)]\n%s", e.taskLedger.ContextSummary(), task.ID, content)
-
-	e.messages = append(e.messages, llm.Message{Role: llm.RoleUser, Content: taskContext})
+	e.messages = append(e.messages, llm.Message{Role: llm.RoleUser, Content: msgContent})
 
 	response := e.runWithTools()
 	if response != "" {
@@ -434,7 +535,10 @@ func (e *AgentEngine) processMessage(content string) {
 // runWithTools streams LLM output, executing any tool calls in a loop until the model is done
 func (e *AgentEngine) runWithTools() string {
 	for {
-		ctx := context.Background()
+		ctx := e.runCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		var stream <-chan llm.StreamEvent
 		var err error
 
@@ -463,6 +567,10 @@ func (e *AgentEngine) runWithTools() string {
 		}
 
 		if err != nil {
+			if ctx.Err() != nil {
+				e.appendLog("\n> Agent force-stopped.\n")
+				return ""
+			}
 			e.appendLog(fmt.Sprintf("[Error] LLM failed: %v\n", err))
 			e.setState("idle")
 			return ""
@@ -493,6 +601,10 @@ func (e *AgentEngine) runWithTools() string {
 				e.Mu(func() {
 					e.State.Ctx = fmt.Sprintf("%dk / 128k", (event.Usage.TotalTokens+500)/1000)
 				})
+				e.logWriter.LogUsage(event.Usage.PromptTokens, event.Usage.CompletionTokens, e.model)
+				if e.collector != nil {
+					e.collector.RecordTokenUsage(event.Usage.PromptTokens, event.Usage.CompletionTokens)
+				}
 			}
 			if event.Done {
 				break
@@ -542,17 +654,39 @@ func (e *AgentEngine) runWithTools() string {
 				result = e.systemTools.Execute(call)
 			case "task_update":
 				result = e.taskTools.Execute(call)
+			case "list_agents", "create_agent", "validate_agent", "explain_agent",
+				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config",
+				"query_logs", "query_metrics", "compare_versions", "list_models":
+				if e.metaTools != nil {
+					result = e.metaTools.Execute(call)
+				} else {
+					result = "Error: meta tools not available"
+				}
 			default:
 				result = fmt.Sprintf("Unknown tool: %s", call.Name)
 			}
+
+			// Write a structured tool entry to the disk log.
+			e.logWriter.LogTool(tc.Name, tc.Arguments, result)
 
 			// If debug verbosity is enabled, print full result, else print truncated
 			e.logDebug(fmt.Sprintf("> Result: %s\n", result))
 
 			outcome := "Success"
-			lowerResult := strings.ToLower(result)
-			if strings.Contains(lowerResult, "error") || strings.Contains(lowerResult, "failed") || strings.Contains(lowerResult, "unknown tool") {
+			if strings.HasPrefix(result, "Error") || strings.HasPrefix(result, "Unknown tool:") {
 				outcome = "Failed"
+			}
+			if e.collector != nil {
+				success := outcome == "Success"
+				e.collector.RecordToolCall(call.Name, success)
+				if call.Name == "viche_send" {
+					e.collector.RecordHandoff()
+				}
+				if call.Name == "task_update" {
+					if statusVal, ok := call.Args["status"].(string); ok && statusVal == "completed" {
+						e.collector.RecordTaskCompleted()
+					}
+				}
 			}
 			e.logVerbose(fmt.Sprintf("> Tool execution completed: %s\n", outcome))
 
@@ -577,39 +711,47 @@ func sanitizeName(name string) string {
 	return s
 }
 
-// appendLog writes to both disk and TUI state
+// appendLog writes to both structured disk log and TUI state.
 func (e *AgentEngine) appendLog(text string) {
 	e.Mu(func() { e.State.Logs += text })
-	if e.logFile != nil {
-		_, _ = e.logFile.WriteString(text)
-	}
+	e.logWriter.Log(inferLevel(text), text)
 }
 
-// logVerbose logs based on verbosity level
+// logVerbose always writes to disk; only updates TUI state at verbose/debug verbosity.
 func (e *AgentEngine) logVerbose(text string) {
 	var v string
 	e.Mu(func() { v = e.State.Verbosity })
 
-	if e.logFile != nil {
-		_, _ = e.logFile.WriteString(text)
-	}
+	e.logWriter.Log("debug", text)
 
 	if v == "verbose" || v == "debug" {
 		e.Mu(func() { e.State.Logs += text })
 	}
 }
 
-// logDebug logs based on verbosity level
+// logDebug always writes to disk; only updates TUI state at debug verbosity.
 func (e *AgentEngine) logDebug(text string) {
 	var v string
 	e.Mu(func() { v = e.State.Verbosity })
 
-	if e.logFile != nil {
-		_, _ = e.logFile.WriteString(text)
-	}
+	e.logWriter.Log("debug", text)
 
 	if v == "debug" {
 		e.Mu(func() { e.State.Logs += text })
+	}
+}
+
+// inferLevel derives a structured log level from message content prefixes.
+func inferLevel(text string) string {
+	switch {
+	case strings.Contains(text, "[Error]"):
+		return "error"
+	case strings.Contains(text, "[Warning]"):
+		return "warn"
+	case strings.Contains(text, "[Thinking]"):
+		return "thinking"
+	default:
+		return "info"
 	}
 }
 
@@ -622,4 +764,82 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// writeAgentMetricsMD writes a human-readable metrics summary to the agent's directory.
+func writeAgentMetricsMD(agentName, scope string, m *metrics.RunMetrics) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	var agentDir string
+	switch scope {
+	case "global", "":
+		agentDir = filepath.Join(home, ".owl", "agents", agentName)
+	case "project":
+		cwd, _ := os.Getwd()
+		agentDir = filepath.Join(cwd, ".owl", "agents", agentName)
+	default:
+		agentDir = filepath.Join(home, ".owl", "agents", agentName)
+	}
+
+	if _, err := os.Stat(agentDir); err != nil {
+		return // agent directory doesn't exist yet
+	}
+
+	dur := ""
+	if m.DurationMS > 0 {
+		dur = fmt.Sprintf("%.1fs", float64(m.DurationMS)/1000)
+	}
+	activeDur := ""
+	if m.ActiveDurationMS > 0 {
+		activeDur = fmt.Sprintf(" (active: %.1fs)", float64(m.ActiveDurationMS)/1000)
+	}
+	cost := ""
+	if m.EstimatedCost > 0 {
+		cost = fmt.Sprintf(" (~$%.4f)", m.EstimatedCost)
+	}
+
+	content := fmt.Sprintf(`# Metrics: %s
+
+**Last run:** %s
+**Run ID:** %s
+**Status:** %s
+**Model:** %s
+**Duration:** %s%s%s
+
+## Token Usage
+- Input: %d
+- Output: %d
+
+## Tool Usage
+- Total calls: %d
+- Failed calls: %d
+
+## Task Ledger
+- Tasks created: %d
+- Tasks completed: %d
+
+## Handoffs
+- Viche handoffs: %d
+`,
+		agentName,
+		m.StartTS.Format("2006-01-02 15:04:05"),
+		m.RunID,
+		m.Status,
+		m.Model,
+		dur,
+		activeDur,
+		cost,
+		m.TokenInput,
+		m.TokenOutput,
+		m.ToolCallCount,
+		m.ToolFailCount,
+		m.TasksCreated,
+		m.TasksCompleted,
+		m.HandoffCount,
+	)
+
+	_ = os.WriteFile(filepath.Join(agentDir, "metrics.md"), []byte(content), 0644)
 }
