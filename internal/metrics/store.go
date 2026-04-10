@@ -120,15 +120,15 @@ type PromptVersionStats struct {
 
 // AgentMetricsSummary is the aggregate view for a single agent.
 type AgentMetricsSummary struct {
-	AgentName          string               `json:"agent_name"`
-	TotalRuns          int                  `json:"total_runs"`
-	SuccessRate        float64              `json:"success_rate"`
-	AvgDurationMS      int64                `json:"avg_duration_ms"`
-	AvgActiveDurationMS int64               `json:"avg_active_duration_ms"`
-	AvgTokensIn        int                  `json:"avg_tokens_in"`
-	AvgTokensOut       int                  `json:"avg_tokens_out"`
-	TotalCost          float64              `json:"total_cost"`
-	PromptVersions     []PromptVersionStats `json:"prompt_versions,omitempty"`
+	AgentName           string               `json:"agent_name"`
+	TotalRuns           int                  `json:"total_runs"`
+	SuccessRate         float64              `json:"success_rate"`
+	AvgDurationMS       int64                `json:"avg_duration_ms"`
+	AvgActiveDurationMS int64                `json:"avg_active_duration_ms"`
+	AvgTokensIn         int                  `json:"avg_tokens_in"`
+	AvgTokensOut        int                  `json:"avg_tokens_out"`
+	TotalCost           float64              `json:"total_cost"`
+	PromptVersions      []PromptVersionStats `json:"prompt_versions,omitempty"`
 }
 
 // Aggregate returns aggregate statistics for a named agent across all stored runs.
