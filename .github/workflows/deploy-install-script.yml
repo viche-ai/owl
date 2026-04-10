@@ -1,0 +1,19 @@
+name: Deploy install script
+on:
+  push:
+    branches: [main]
+    paths: [install/install.sh]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./install  # put install.sh in /install
+      - uses: actions/deploy-pages@v4
