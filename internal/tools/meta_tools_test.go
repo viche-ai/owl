@@ -9,6 +9,9 @@ import (
 
 func TestMetaToolsListAgents_Empty(t *testing.T) {
 	dir := t.TempDir()
+	// Isolate HOME so the global scope (~/.owl/agents/) is also empty
+	t.Setenv("HOME", dir)
+
 	mt := &MetaTools{WorkDir: dir}
 
 	result := mt.Execute(ToolCall{Name: "list_agents", Args: map[string]interface{}{}})

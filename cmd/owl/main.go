@@ -333,6 +333,7 @@ func main() {
 	rootCmd.AddCommand(runsCmd)
 	rootCmd.AddCommand(metricsCmd)
 	rootCmd.AddCommand(recommendCmd)
+	rootCmd.AddCommand(designCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

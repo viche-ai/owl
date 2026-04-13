@@ -34,6 +34,7 @@ Tools available to you:
 - query_metrics: query per-run metrics (token usage, cost, tool failures, duration, active duration) for an agent or all agents
 - compare_versions: compare success rates across prompt versions for an agent
 - list_models: list configured LLM providers and available models for model selection recommendations
+- draft_agent: generate a formatted agent definition preview for user review (does NOT write files)
 - shell_exec, file_read, file_write, file_edit: general file operations
 
 PLATFORM CONTEXT — Owl + Viche:
@@ -67,7 +68,85 @@ PROMPT MUTATION POLICY:
 1. Call suggest_edit to show the diff with a [Proposed change] header
 2. Wait for the user to reply with "yes", "apply", or "approve"
 3. Call apply_edit to write the file, bump patch version, append CHANGELOG.md
-4. On rejection: acknowledge and suggest alternatives`
+4. On rejection: acknowledge and suggest alternatives
+
+AGENT DESIGN INTERVIEW:
+When the user wants to design or create a new agent — triggered by phrases like "design an agent",
+"create a new agent", "I need an agent that...", or a design interview kickoff — follow this protocol:
+
+Phase 1 — Context Gathering (silent, do not narrate):
+  Call these tools before asking any questions:
+  - read_project_config: understand project guardrails and context
+  - list_agents: see what agents already exist (avoid capability overlap)
+  - list_models: know what models are available
+
+Phase 2 — Discovery Interview (multi-turn, ONE question per message):
+  Ask these questions adaptively — skip any already answered in the user's initial request.
+  Be conversational, not interrogative. Acknowledge each answer briefly before moving on.
+
+  Q1: "What should this agent do? Describe the task or role in your own words."
+      This is the seed. If the user gives a detailed description, skip to Q3 or further.
+
+  Q2: "What specific steps should it follow? Walk me through its ideal workflow."
+      Skip if the user already described a clear process.
+      If the user is unsure, suggest 2-3 example workflows based on the described role.
+
+  Q3: "Will this agent coordinate with other agents, or work independently?"
+      If other agents exist (from list_agents), suggest specific coordination patterns.
+      Skip if the initial description mentioned coordination or independence.
+
+  Q4: "Are there things this agent should never do? Any hard constraints?"
+      Merge with project guardrails from read_project_config.
+      Skip if the user already stated constraints.
+
+  Q5: "What name and scope (project or global) should this agent have?"
+      Suggest a hyphenated name based on the role described.
+      Default to project scope unless the user indicates cross-project reuse.
+
+  Q6: "Any preference on which model to use, or should I pick one based on the task?"
+      Only ask if multiple providers are configured.
+      Suggest a model based on task complexity (reference list_models output).
+
+  After enough information is gathered, move to Phase 3.
+
+Phase 3 — Draft Generation:
+  Call draft_agent with the structured definition. The draft AGENTS.md must follow this format:
+
+  # {Agent Name}
+  {Identity paragraph — "You are..." — describing role and approach}
+
+  ## Process
+  1. {Numbered, specific, actionable steps}
+  2. {Reference concrete files, tools, or outputs}
+  ...
+
+  ## Coordination
+  {How to use viche_discover and viche_send, or "This agent operates independently."}
+
+  ## Standards
+  - {Bullet-pointed behavioral constraints and quality expectations}
+  - {What to avoid}
+  ...
+
+  The draft_agent tool returns a formatted preview. Present it to the user.
+
+Phase 4 — Revision & Creation:
+  If the user requests changes, revise and call draft_agent again.
+  When the user approves (says "create", "yes", "looks good", etc.):
+  1. Call create_agent with the final AGENTS.md content, name, scope, description, and capabilities.
+  2. If role_md was included in the draft, call apply_edit to write role.md to the agent directory.
+  3. If guardrails_md was included, call apply_edit to write guardrails.md to the agent directory.
+  4. Call validate_agent to confirm the result is valid.
+  5. Report success with the agent path and a reminder of how to hatch it.
+
+INTERVIEW PRINCIPLES:
+- One question at a time. Never dump all questions in a single message.
+- If the user gives a comprehensive description upfront, skip to Phase 3 after 1-2 clarifications.
+- Use information from existing agents to suggest coordination patterns and avoid capability overlap.
+- Only generate role.md if extended context is needed beyond AGENTS.md (e.g., reference docs, API schemas).
+  Do NOT generate role.md that merely restates AGENTS.md.
+- Only generate guardrails.md if the agent has constraints beyond project guardrails.
+  Do NOT generate guardrails.md that merely restates project guardrails.`
 
 // MetaAgentToolDefs returns the tool definitions for the Owl meta-agent.
 func MetaAgentToolDefs() []tools.ToolDefinition {
@@ -263,6 +342,49 @@ func MetaAgentToolDefs() []tools.ToolDefinition {
 				"type":       "object",
 				"properties": map[string]interface{}{},
 				"required":   []string{},
+			},
+		},
+		{
+			Name:        "draft_agent",
+			Description: "Generate a formatted preview of a new agent definition for user review. Does NOT write any files — call create_agent after the user approves the draft.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Proposed agent name (hyphenated, e.g. code-reviewer)",
+					},
+					"scope": map[string]interface{}{
+						"type":        "string",
+						"description": "Target scope: 'project' or 'global'",
+					},
+					"agents_md": map[string]interface{}{
+						"type":        "string",
+						"description": "Full proposed AGENTS.md content with Identity paragraph, ## Process, ## Coordination, and ## Standards sections",
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "One-line description for agent.yaml",
+					},
+					"capabilities": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Capability tags for Viche discovery (e.g. ['code-review', 'analysis'])",
+					},
+					"default_model": map[string]interface{}{
+						"type":        "string",
+						"description": "Recommended default model ID (optional)",
+					},
+					"role_md": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional role.md content — only if extended context beyond AGENTS.md is needed",
+					},
+					"guardrails_md": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional guardrails.md content — only if agent-specific constraints beyond project guardrails are needed",
+					},
+				},
+				"required": []string{"name", "scope", "agents_md", "description", "capabilities"},
 			},
 		},
 	}

@@ -45,6 +45,8 @@ func (t *MetaTools) Execute(call ToolCall) string {
 		return t.compareVersions(call)
 	case "list_models":
 		return t.listModels(call)
+	case "draft_agent":
+		return t.draftAgent(call)
 	default:
 		return fmt.Sprintf("Unknown meta tool: %s", call.Name)
 	}
@@ -397,6 +399,107 @@ func (t *MetaTools) listModels(_ ToolCall) string {
 	lines = append(lines, "  - Fast, simple tasks, high-volume → haiku-class, flash, or gpt-4o-mini")
 	lines = append(lines, "  - Set default_model in agent.yaml to override the global default for a specific agent")
 	return strings.Join(lines, "\n")
+}
+
+func (t *MetaTools) draftAgent(call ToolCall) string {
+	name, _ := call.Args["name"].(string)
+	scope, _ := call.Args["scope"].(string)
+	agentsMD, _ := call.Args["agents_md"].(string)
+	description, _ := call.Args["description"].(string)
+	capRaw, _ := call.Args["capabilities"].([]interface{})
+	defaultModel, _ := call.Args["default_model"].(string)
+	roleMD, _ := call.Args["role_md"].(string)
+	guardrailsMD, _ := call.Args["guardrails_md"].(string)
+
+	if name == "" || scope == "" || agentsMD == "" || description == "" {
+		return "Error: name, scope, agents_md, and description are required"
+	}
+	if scope != "project" && scope != "global" {
+		return "Error: scope must be 'project' or 'global'"
+	}
+
+	var caps []string
+	for _, c := range capRaw {
+		if s, ok := c.(string); ok {
+			caps = append(caps, s)
+		}
+	}
+	if len(caps) == 0 {
+		return "Error: at least one capability is required"
+	}
+
+	// Check for expected AGENTS.md sections
+	var warnings []string
+	for _, section := range []string{"## Process", "## Coordination", "## Standards"} {
+		if !strings.Contains(agentsMD, section) {
+			warnings = append(warnings, fmt.Sprintf("  ⚠ Missing section: %s", section))
+		}
+	}
+
+	// Build the preview
+	var preview strings.Builder
+
+	preview.WriteString("╭─── Agent Definition Draft ───╮\n\n")
+
+	// agent.yaml preview
+	preview.WriteString("── agent.yaml ──\n")
+	preview.WriteString(buildAgentYAML(name, "1.0.0", description, caps, defaultModel))
+	preview.WriteString("\n")
+
+	// AGENTS.md preview
+	preview.WriteString("── AGENTS.md ──\n")
+	preview.WriteString(agentsMD)
+	if !strings.HasSuffix(agentsMD, "\n") {
+		preview.WriteString("\n")
+	}
+
+	// Optional files
+	if roleMD != "" {
+		preview.WriteString("\n── role.md ──\n")
+		preview.WriteString(roleMD)
+		if !strings.HasSuffix(roleMD, "\n") {
+			preview.WriteString("\n")
+		}
+	}
+	if guardrailsMD != "" {
+		preview.WriteString("\n── guardrails.md ──\n")
+		preview.WriteString(guardrailsMD)
+		if !strings.HasSuffix(guardrailsMD, "\n") {
+			preview.WriteString("\n")
+		}
+	}
+
+	preview.WriteString("\n╰──────────────────────────────╯\n")
+
+	// Scope and path info
+	fmt.Fprintf(&preview, "\nScope: %s\n", scope)
+	fileCount := 2 // AGENTS.md + agent.yaml
+	if roleMD != "" {
+		fileCount++
+	}
+	if guardrailsMD != "" {
+		fileCount++
+	}
+	fmt.Fprintf(&preview, "Files: %d (%s)\n", fileCount, func() string {
+		files := "AGENTS.md, agent.yaml"
+		if roleMD != "" {
+			files += ", role.md"
+		}
+		if guardrailsMD != "" {
+			files += ", guardrails.md"
+		}
+		return files
+	}())
+
+	if len(warnings) > 0 {
+		preview.WriteString("\nWarnings:\n")
+		for _, w := range warnings {
+			preview.WriteString(w + "\n")
+		}
+	}
+
+	preview.WriteString("\nReply 'create' to write these files, or describe what to change.")
+	return preview.String()
 }
 
 // resolveNewAgentDir returns the target directory path for a new agent definition.
