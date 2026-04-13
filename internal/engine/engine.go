@@ -429,6 +429,7 @@ Your initial plan was:
 	if !args.Ambient {
 		e.appendLog("> Starting work on task...\n")
 		e.processMessage(args.Description)
+		e.saveMetricsSnapshot()
 	} else {
 		e.appendLog("> Ambient mode active. Waiting for messages...\n")
 	}
@@ -439,6 +440,7 @@ Your initial plan was:
 	for msg := range inbox {
 		e.appendLog(fmt.Sprintf("\n> [%s] %s\n", msg.From, msg.Content))
 		e.processMessage(msg.Content)
+		e.saveMetricsSnapshot()
 	}
 
 	// ── Cleanup ──
@@ -530,6 +532,18 @@ func (e *AgentEngine) processMessage(content string) {
 	}
 
 	e.setState("idle")
+}
+
+// saveMetricsSnapshot persists a point-in-time snapshot of the current metrics to disk.
+// This allows query_metrics to return data for agents that are still running.
+func (e *AgentEngine) saveMetricsSnapshot() {
+	if e.collector == nil || e.MetricStore == nil {
+		return
+	}
+	snap := e.collector.Snapshot()
+	snap.DurationMS = time.Since(snap.StartTS).Milliseconds()
+	snap.EstimatedCost = metrics.EstimateCost(snap.Model, snap.TokenInput, snap.TokenOutput)
+	_ = e.MetricStore.Save(&snap)
 }
 
 // runWithTools streams LLM output, executing any tool calls in a loop until the model is done
@@ -656,7 +670,8 @@ func (e *AgentEngine) runWithTools() string {
 				result = e.taskTools.Execute(call)
 			case "list_agents", "create_agent", "validate_agent", "explain_agent",
 				"suggest_edit", "apply_edit", "read_agent_file", "read_project_config",
-				"query_logs", "query_metrics", "compare_versions", "list_models":
+				"query_logs", "query_metrics", "compare_versions", "list_models",
+				"draft_agent":
 				if e.metaTools != nil {
 					result = e.metaTools.Execute(call)
 				} else {

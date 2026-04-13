@@ -222,7 +222,7 @@ var recommendCmd = &cobra.Command{
 				"   Note: metrics include both wall-clock duration and active duration.\n"+
 				"   For ambient agents (long-running, waiting for messages), focus on active duration — wall-clock time includes idle wait and is not meaningful for performance analysis.\n"+
 				"2. Call compare_versions with agent_name=%q to compare prompt versions.\n"+
-				"3. Call query_logs with agent_name=%q and level=error to identify recurring failures.\n"+
+				"3. Call query_logs with agent_name=%q to review recent activity and identify any errors or issues.\n"+
 				"4. Call read_agent_file with name=%q and file=AGENTS.md to understand the agent's task and role.\n"+
 				"5. Call list_models to see configured providers.\n"+
 				"6. Based on the agent's task complexity (from AGENTS.md), token usage patterns, and available models, recommend whether the current model is appropriate or if a different model would be better suited. Consider cost vs capability tradeoffs.\n"+

@@ -9,14 +9,37 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/viche-ai/owl/internal/ipc"
 )
 
 func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+	harnessStatus := "completed"
+	defer func() {
+		// Finalise metrics — runHarness returns early from Run(), so the
+		// normal cleanup block never executes.
+		if e.collector != nil {
+			m := e.collector.Finalize(harnessStatus)
+			if e.MetricStore != nil {
+				_ = e.MetricStore.Save(m)
+			}
+		}
+		if e.RunStore != nil {
+			if rec, err := e.RunStore.Load(e.State.RunID); err == nil {
+				rec.State = "stopped"
+				rec.ExitReason = harnessStatus
+				now := time.Now()
+				rec.EndTime = &now
+				_ = e.RunStore.Save(rec)
+			}
+		}
+	}()
+
 	name := strings.ToLower(strings.TrimSpace(args.Harness))
 	if name == "" {
 		e.appendLog("[Error] Harness name is required.\n")
+		harnessStatus = "failed"
 		e.setState("idle")
 		return
 	}
@@ -24,6 +47,7 @@ func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox
 	cmdName, cmdArgs, err := buildHarnessCommand(name, args)
 	if err != nil {
 		e.appendLog(fmt.Sprintf("[Error] %v\n", err))
+		harnessStatus = "failed"
 		e.setState("idle")
 		return
 	}
@@ -74,6 +98,7 @@ func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox
 
 	if err := cmd.Start(); err != nil {
 		e.appendLog(fmt.Sprintf("[Error] failed starting harness: %v\n", err))
+		harnessStatus = "failed"
 		e.setState("idle")
 		return
 	}
@@ -102,12 +127,14 @@ func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox
 			<-done
 			wg.Wait()
 			e.appendLog("\n> Agent force-stopped.\n")
+			harnessStatus = "stopped"
 			e.setState("stopped")
 			return
 		case err := <-done:
 			wg.Wait()
 			if err != nil {
 				e.appendLog(fmt.Sprintf("\n[Harness exited with error] %v\n", err))
+				harnessStatus = "failed"
 				e.setState("error")
 			} else {
 				e.appendLog("\n[Harness exited successfully]\n")
@@ -120,6 +147,7 @@ func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox
 				<-done
 				wg.Wait()
 				e.appendLog("\n> Agent stopped.\n")
+				harnessStatus = "stopped"
 				e.setState("stopped")
 				return
 			}

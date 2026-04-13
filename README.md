@@ -27,11 +27,11 @@ Owl is a meta-harness: it wraps your existing agent runtimes — `claude-code`, 
 Think of it as what you put *around* your agents, not what replaces them.
 
 ```
-AGENTS.md ──► owl hatch ──► owld ──► Viche registry
-                               │            │
-                          TUI (owl)   other agents
-                               │
-                         metrics ──► owl recommend ──► better AGENTS.md
+owl design ──► AGENTS.md ──► owl hatch ──► owld ──► Viche registry
+                                              │            │
+                                         TUI (owl)   other agents
+                                              │
+                                        metrics ──► owl recommend ──► better AGENTS.md
 ```
 
 Three things Owl does that nothing else does together:
@@ -77,10 +77,10 @@ owld
 # 2. Open the TUI (in a separate terminal)
 owl
 
-# 3. Hatch your first agent
-owl hatch "Refactor the auth module to use JWTs"
+# 3. Design your first agent (guided interview)
+owl design "a code reviewer for PRs"
 
-# 4. Or hatch a defined agent (reproducible, versioned)
+# 4. Or hatch an agent directly
 owl hatch --agent reviewer
 ```
 
@@ -107,6 +107,26 @@ Owl's definition system lets you encode *who an agent is* — not just what it d
 ├── role.md         # Optional. Extended role description and context.
 └── guardrails.md   # Optional. Constraints this agent must follow.
 ```
+
+### Designing Agents
+
+The fastest way to create a well-structured agent definition is with the guided design interview:
+
+```bash
+# Start the interview in the TUI
+owl design
+
+# Or provide an initial description to skip early questions
+owl design "a security auditor that scans for OWASP top 10 vulnerabilities"
+```
+
+You can also start the interview by typing "design an agent" directly in the TUI console (owl tab).
+
+The meta-agent will:
+1. Gather context about your project (existing agents, guardrails, available models)
+2. Interview you about the agent's purpose, workflow, coordination needs, and constraints
+3. Generate a complete draft (AGENTS.md + agent.yaml + optional files) for your review
+4. Create the files after you approve
 
 ### Scopes
 
@@ -218,7 +238,8 @@ After runs complete, Owl captures structured metrics per agent: task success, to
 
 ```bash
 owl metrics show <agent|run-id>      # inspect what happened
-owl recommend --agent <name>         # get prompt improvement suggestions (early preview)
+owl recommend --agent <name>         # get prompt improvement suggestions
+owl design [description...]          # guided interview to create a new agent
 ```
 
 The improvement loop is designed around *approval*, not autonomy — Owl surfaces suggestions and diffs, you decide what to apply and commit. The goal is a tightening cycle: better definitions → better runs → better metrics → better definitions.
