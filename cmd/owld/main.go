@@ -15,6 +15,7 @@ import (
 
 	"github.com/viche-ai/owl/internal/config"
 	"github.com/viche-ai/owl/internal/engine"
+	"github.com/viche-ai/owl/internal/harness"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
 	"github.com/viche-ai/owl/internal/metrics"
@@ -32,6 +33,11 @@ func main() {
 	}
 
 	router := llm.NewRouter(cfg)
+
+	harnessReg := harness.NewRegistry()
+	if err := harnessReg.LoadUserDir(); err != nil {
+		log.Println("Warning: could not load user harness definitions:", err)
+	}
 
 	log.Printf("owld starting with %d provider(s) configured", len(router.ListProviders()))
 	for _, p := range router.ListProviders() {
@@ -54,12 +60,13 @@ func main() {
 
 	ipc.RunEngineHook = func(ctx context.Context, state *ipc.AgentState, mu func(func()), args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
 		eng := &engine.AgentEngine{
-			State:       state,
-			Cfg:         cfg,
-			Mu:          mu,
-			Router:      router,
-			RunStore:    daemon.RunStore,
-			MetricStore: metricStore,
+			State:           state,
+			Cfg:             cfg,
+			Mu:              mu,
+			Router:          router,
+			RunStore:        daemon.RunStore,
+			MetricStore:     metricStore,
+			HarnessRegistry: harnessReg,
 		}
 		eng.Run(ctx, args, inbox)
 	}

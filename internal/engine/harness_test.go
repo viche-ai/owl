@@ -4,56 +4,62 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/viche-ai/owl/internal/ipc"
+	"github.com/viche-ai/owl/internal/harness"
 )
 
-func TestBuildHarnessCommand(t *testing.T) {
+func TestBuildHarnessCommand_ViaRegistry(t *testing.T) {
+	r := harness.NewRegistry()
+
 	tests := []struct {
 		name      string
 		harness   string
-		args      *ipc.HatchArgs
+		desc      string
+		workDir   string
 		wantCmd   string
 		wantParts []string
-		wantErr   string
 	}{
 		{
 			name:      "codex",
 			harness:   "codex",
-			args:      &ipc.HatchArgs{Description: "fix tests"},
+			desc:      "fix tests",
+			workDir:   "/work",
 			wantCmd:   "codex",
 			wantParts: []string{"exec", "fix tests"},
 		},
 		{
 			name:      "opencode includes dir",
 			harness:   "opencode",
-			args:      &ipc.HatchArgs{Description: "review", WorkDir: "/tmp/x"},
+			desc:      "review",
+			workDir:   "/tmp/x",
 			wantCmd:   "opencode",
 			wantParts: []string{"run", "--dir", "/tmp/x", "review"},
 		},
 		{
-			name:      "claude",
+			name:      "claude-code",
 			harness:   "claude-code",
-			args:      &ipc.HatchArgs{Description: "plan this"},
+			desc:      "plan this",
+			workDir:   "/work",
 			wantCmd:   "claude",
-			wantParts: []string{"--print", "plan this"},
+			wantParts: []string{"-p", "--verbose", "--output-format", "stream-json", "plan this"},
 		},
 		{
-			name:    "reject shell metacharacters",
-			harness: "codex",
-			args:    &ipc.HatchArgs{Description: "x", HarnessArgs: "--foo ; rm -rf /"},
-			wantErr: "disallowed shell metacharacters",
+			name:      "claude alias",
+			harness:   "claude",
+			desc:      "plan this",
+			workDir:   "/work",
+			wantCmd:   "claude",
+			wantParts: []string{"-p", "--verbose", "--output-format", "stream-json", "plan this"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd, parts, err := buildHarnessCommand(tc.harness, tc.args)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-				}
-				return
+			def, err := r.Resolve(tc.harness)
+			if err != nil {
+				t.Fatalf("resolve %q: %v", tc.harness, err)
 			}
+
+			cmd, parts, err := def.BuildCommand(tc.desc, tc.workDir, nil)
 			if err != nil {
 				t.Fatalf("unexpected err: %v", err)
 			}
@@ -69,5 +75,63 @@ func TestBuildHarnessCommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseHarnessArgs_Valid(t *testing.T) {
+	args, err := parseHarnessArgs("--verbose --flag value")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"--verbose", "--flag", "value"}
+	if len(args) != len(want) {
+		t.Fatalf("got %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] got %q want %q", i, args[i], want[i])
+		}
+	}
+}
+
+func TestParseHarnessArgs_Empty(t *testing.T) {
+	args, err := parseHarnessArgs("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if args != nil {
+		t.Fatalf("expected nil, got %v", args)
+	}
+}
+
+func TestParseHarnessArgs_RejectMetacharacters(t *testing.T) {
+	bad := []string{
+		"--foo ; rm -rf /",
+		"--foo | cat",
+		"--foo & bg",
+		"--foo `cmd`",
+		"--foo > file",
+		"--foo < file",
+		"--foo\nbar",
+	}
+	for _, input := range bad {
+		_, err := parseHarnessArgs(input)
+		if err == nil {
+			t.Errorf("expected rejection for %q", input)
+		}
+		if err != nil && !strings.Contains(err.Error(), "disallowed shell metacharacters") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	}
+}
+
+func TestResolveHarness_UnknownName(t *testing.T) {
+	r := harness.NewRegistry()
+	_, err := r.Resolve("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown harness")
+	}
+	if !strings.Contains(err.Error(), "unknown harness") {
+		t.Fatalf("expected 'unknown harness' error, got: %v", err)
 	}
 }

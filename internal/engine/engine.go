@@ -12,6 +12,7 @@ import (
 
 	"github.com/viche-ai/owl/internal/agents"
 	"github.com/viche-ai/owl/internal/config"
+	"github.com/viche-ai/owl/internal/harness"
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
 	"github.com/viche-ai/owl/internal/logs"
@@ -22,12 +23,13 @@ import (
 )
 
 type AgentEngine struct {
-	State       *ipc.AgentState
-	Cfg         *config.Config
-	Mu          func(func())
-	Router      *llm.Router
-	RunStore    *runs.Store    // optional; persists state transitions to disk
-	MetricStore *metrics.Store // optional; persists run metrics to disk
+	State           *ipc.AgentState
+	Cfg             *config.Config
+	Mu              func(func())
+	Router          *llm.Router
+	RunStore        *runs.Store       // optional; persists state transitions to disk
+	MetricStore     *metrics.Store    // optional; persists run metrics to disk
+	HarnessRegistry *harness.Registry // optional; resolves harness definitions
 
 	logWriter   *logs.Writer
 	collector   *metrics.Collector
@@ -86,8 +88,26 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 	e.appendLog(fmt.Sprintf("> Log: %s\n", logPath))
 	time.Sleep(200 * time.Millisecond)
 
+	// Resolve working directory early — needed for both harness and native paths.
+	workDir := args.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+
+	// Resolve agent definition early so harness mode can use it for context injection.
+	var agentDef *agents.AgentDefinition
+	if args.Agent != "" {
+		agentResolver := agents.NewResolver(workDir)
+		if def, err := agentResolver.Resolve(args.Agent, args.Scope); err == nil {
+			agentDef = def
+			e.appendLog(fmt.Sprintf("> Loaded agent definition %q from %s scope (%s)\n", def.Name, def.Scope, def.SourcePath))
+		} else {
+			e.appendLog(fmt.Sprintf("[Warning] Could not load agent definition %q: %v\n", args.Agent, err))
+		}
+	}
+
 	if args.Harness != "" {
-		e.runHarness(ctx, args, inbox)
+		e.runHarness(ctx, args, inbox, agentDef)
 		return
 	}
 
@@ -149,30 +169,17 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 		return
 	}
 
-	// ── Step 2: Resolve agent definition (before scaffolding) ──
-	workDir := args.WorkDir
-	if workDir == "" {
-		workDir, _ = os.Getwd()
-	}
-
-	var agentDef *agents.AgentDefinition
-	if args.Agent != "" {
-		agentResolver := agents.NewResolver(workDir)
-		e.appendLog(fmt.Sprintf("> Resolving agent definition %q (scope=%q, workdir=%s)\n", args.Agent, args.Scope, workDir))
-		if def, err := agentResolver.Resolve(args.Agent, args.Scope); err == nil {
-			agentDef = def
-			e.appendLog(fmt.Sprintf("> Loaded agent definition %q from %s scope (%s)\n", def.Name, def.Scope, def.SourcePath))
-			if def.AgentsMD != "" {
-				e.appendLog(fmt.Sprintf("> AGENTS.md loaded (%d bytes)\n", len(def.AgentsMD)))
-			}
-			if def.RoleMD != "" {
-				e.appendLog(fmt.Sprintf("> role.md loaded (%d bytes)\n", len(def.RoleMD)))
-			}
-			if def.GuardrailsMD != "" {
-				e.appendLog(fmt.Sprintf("> guardrails.md loaded (%d bytes)\n", len(def.GuardrailsMD)))
-			}
-		} else {
-			e.appendLog(fmt.Sprintf("[Warning] Could not load agent definition %q: %v\n", args.Agent, err))
+	// ── Step 2: Agent definition detail logging ──
+	// (Agent definition was already resolved above, before the harness check.)
+	if agentDef != nil {
+		if agentDef.AgentsMD != "" {
+			e.appendLog(fmt.Sprintf("> AGENTS.md loaded (%d bytes)\n", len(agentDef.AgentsMD)))
+		}
+		if agentDef.RoleMD != "" {
+			e.appendLog(fmt.Sprintf("> role.md loaded (%d bytes)\n", len(agentDef.RoleMD)))
+		}
+		if agentDef.GuardrailsMD != "" {
+			e.appendLog(fmt.Sprintf("> guardrails.md loaded (%d bytes)\n", len(agentDef.GuardrailsMD)))
 		}
 	}
 

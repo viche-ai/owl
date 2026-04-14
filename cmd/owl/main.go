@@ -321,7 +321,7 @@ func main() {
 	hatchCmd.Flags().StringVar(&nameFlag, "name", "", "Override the agent's display name")
 	hatchCmd.Flags().BoolVar(&ambientFlag, "ambient", false, "Hatch into an ambient background mode (waits for messages without starting work immediately)")
 	hatchCmd.Flags().StringVar(&dirFlag, "dir", "", "Set the working directory for the agent (finds .owl/config.json and sets file operation root)")
-	hatchCmd.Flags().StringVar(&harnessFlag, "harness", "", "Run an external coding harness (codex|opencode|claude-code)")
+	hatchCmd.Flags().StringVar(&harnessFlag, "harness", "", "Run an external coding harness (built-in: codex, opencode, claude-code; custom: ~/.owl/harnesses/)")
 	hatchCmd.Flags().StringVar(&harnessArgsFlag, "harness-args", "", "Additional args passed to the selected harness")
 	hatchCmd.Flags().BoolVar(&noNetInjectFlag, "no-network-inject", false, "Disable Viche/Owl env injection into harness process")
 
