@@ -254,13 +254,13 @@ func initialModel() model {
 	ti := textinput.New()
 	ti.Placeholder = "Talk to Owl, or use 'hatch <desc>' to spawn an agent"
 	ti.Focus()
-	ti.CharLimit = 200
+	ti.CharLimit = 4096
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(Green).Bold(true)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(Fg)
 
 	ai := textinput.New()
 	ai.Placeholder = "Send a message to this agent..."
-	ai.CharLimit = 500
+	ai.CharLimit = 4096
 	ai.PromptStyle = lipgloss.NewStyle().Foreground(Blue).Bold(true)
 	ai.TextStyle = lipgloss.NewStyle().Foreground(Fg)
 
@@ -1150,7 +1150,6 @@ func formatAgentLogs(raw string) string {
 				BorderForeground(borderColor).
 				BorderBackground(PaneBg).
 				PaddingLeft(1).
-				MarginBottom(1).
 				Background(PaneBg).
 				Render(content)
 
@@ -1193,7 +1192,7 @@ func formatAgentLogs(raw string) string {
 						return m
 					})
 
-					block := lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(BorderColor).BorderBackground(PaneBg).PaddingLeft(1).MarginBottom(1).Background(PaneBg).Render(s)
+					block := lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(BorderColor).BorderBackground(PaneBg).PaddingLeft(1).Background(PaneBg).Render(s)
 					out = append(out, block)
 					continue
 				}
