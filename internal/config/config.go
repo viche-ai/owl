@@ -28,10 +28,18 @@ type VicheConfig struct {
 	Registries      []RegistryConfig `json:"registries"`
 }
 
+// HarnessUserConfig holds per-harness defaults configured by the user.
+type HarnessUserConfig struct {
+	ExtraArgs []string          `json:"extra_args,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	ModelEnv  string            `json:"model_env,omitempty"` // env var to pass --model value to
+}
+
 type Config struct {
-	Models       ModelsConfig `json:"models"`
-	Viche        VicheConfig  `json:"viche"`
-	SystemPrompt string       `json:"system_prompt,omitempty"`
+	Models       ModelsConfig                 `json:"models"`
+	Viche        VicheConfig                  `json:"viche"`
+	SystemPrompt string                       `json:"system_prompt,omitempty"`
+	Harnesses    map[string]HarnessUserConfig `json:"harnesses,omitempty"`
 }
 
 func DefaultSystemPrompt() string {
