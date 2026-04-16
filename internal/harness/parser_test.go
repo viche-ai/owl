@@ -216,7 +216,7 @@ func TestClaudeStreamParser_ToolResult(t *testing.T) {
 	if len(events) != 1 || events[0].Type != "text" {
 		t.Fatalf("expected text event for tool_result, got %+v", events)
 	}
-	if !containsString(events[0].Content, "Read") || !containsString(events[0].Content, "file contents here") {
+	if !strings.Contains(events[0].Content, "Read") || !strings.Contains(events[0].Content, "file contents here") {
 		t.Fatalf("tool_result should show name and content, got %q", events[0].Content)
 	}
 }

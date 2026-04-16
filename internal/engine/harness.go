@@ -17,7 +17,7 @@ import (
 	"github.com/viche-ai/owl/internal/ipc"
 )
 
-func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage, agentDef *agents.AgentDefinition) {
+func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage, agentDef *agents.AgentDefinition, workDir string) {
 	harnessStatus := "completed"
 	defer func() {
 		if e.collector != nil {
@@ -68,11 +68,6 @@ func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox
 		return
 	}
 
-	workDir := args.WorkDir
-	if workDir == "" {
-		workDir, _ = os.Getwd()
-	}
-
 	// Inject agent definition context (if provided).
 	description := args.Description
 	var injectedEnv []string
@@ -107,10 +102,10 @@ func (e *AgentEngine) runHarness(ctx context.Context, args *ipc.HatchArgs, inbox
 		e.State.Role = "harness:" + name
 		e.State.ModelID = "harness/" + name
 		e.State.Harness = name
+		if e.State.Name == "" {
+			e.State.Name = name
+		}
 	})
-	if e.State.Name == "" {
-		e.Mu(func() { e.State.Name = name })
-	}
 
 	// Start callback server (lives for the entire harness session).
 	cbServer := harness.NewCallbackServer(
@@ -299,6 +294,9 @@ func (e *AgentEngine) execHarness(
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			e.appendLog(fmt.Sprintf("[Warning] stdout scanner error (line may have exceeded 1MB buffer): %v\n", err))
+		}
 	}()
 
 	// stderr: always plain text
@@ -364,12 +362,14 @@ func (e *AgentEngine) execHarness(
 }
 
 // resolveHarness looks up a harness definition from the registry, falling back
-// to a minimal definition for backward compatibility if no registry is set.
+// to a fresh registry (with user definitions) if no registry is set.
 func (e *AgentEngine) resolveHarness(name string) (*harness.HarnessDefinition, error) {
 	if e.HarnessRegistry != nil {
 		return e.HarnessRegistry.Resolve(name)
 	}
-	return harness.NewRegistry().Resolve(name)
+	r := harness.NewRegistry()
+	_ = r.LoadUserDir()
+	return r.Resolve(name)
 }
 
 func terminateHarness(cmd *exec.Cmd) error {

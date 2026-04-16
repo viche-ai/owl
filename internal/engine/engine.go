@@ -107,7 +107,7 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 	}
 
 	if args.Harness != "" {
-		e.runHarness(ctx, args, inbox, agentDef)
+		e.runHarness(ctx, args, inbox, agentDef, workDir)
 		return
 	}
 

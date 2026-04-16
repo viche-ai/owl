@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,7 +41,7 @@ func TestResolve_Unknown(t *testing.T) {
 		t.Fatal("expected error for unknown harness")
 	}
 	// Error should list available harnesses
-	if got := err.Error(); !contains(got, "claude-code") || !contains(got, "codex") {
+	if got := err.Error(); !strings.Contains(got, "claude-code") || !strings.Contains(got, "codex") {
 		t.Fatalf("error should list available harnesses, got: %s", got)
 	}
 }
@@ -192,17 +193,4 @@ aliases: ["mt", "my"]
 			t.Fatalf("alias %q resolved to %q, expected 'my-tool'", alias, def.Name)
 		}
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchSubstring(s, substr)
-}
-
-func searchSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

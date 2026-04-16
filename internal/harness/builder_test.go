@@ -1,7 +1,7 @@
 package harness
 
 import (
-	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -80,7 +80,7 @@ func TestCheckBinary_Missing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing binary")
 	}
-	if got := err.Error(); !containsStr(got, "not found on PATH") {
+	if got := err.Error(); !strings.Contains(got, "not found on PATH") {
 		t.Fatalf("error should mention PATH, got: %s", got)
 	}
 }
@@ -150,19 +150,3 @@ func expectArgs(t *testing.T, got, want []string) {
 		}
 	}
 }
-
-func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && findSubstring(s, sub)
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
-// Verify exec.LookPath is used correctly (compile-time check)
-var _ = exec.LookPath

@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/viche-ai/owl/internal/agents"
@@ -49,10 +50,10 @@ func TestInjectAgentContext_ArgPrepend(t *testing.T) {
 	defer cleanup()
 
 	// Description should be prepended with agent content
-	if !containsString(desc, "# Reviewer") {
+	if !strings.Contains(desc, "# Reviewer") {
 		t.Fatalf("description should contain AGENTS.md content, got %q", desc)
 	}
-	if !containsString(desc, "review PR #42") {
+	if !strings.Contains(desc, "review PR #42") {
 		t.Fatalf("description should still contain original, got %q", desc)
 	}
 	if len(env) != 0 {
@@ -73,7 +74,7 @@ func TestInjectAgentContext_ArgPrepend_DefaultFallback(t *testing.T) {
 	}
 	defer cleanup()
 
-	if !containsString(desc, "# Reviewer") {
+	if !strings.Contains(desc, "# Reviewer") {
 		t.Fatalf("should default to arg-prepend, got %q", desc)
 	}
 }
@@ -103,10 +104,10 @@ func TestInjectAgentContext_Env(t *testing.T) {
 	if len(env) != 1 {
 		t.Fatalf("expected 1 env var, got %d: %v", len(env), env)
 	}
-	if !containsString(env[0], "MY_PROMPT=") {
+	if !strings.Contains(env[0], "MY_PROMPT=") {
 		t.Fatalf("env var should start with MY_PROMPT=, got %q", env[0])
 	}
-	if !containsString(env[0], "# Reviewer") {
+	if !strings.Contains(env[0], "# Reviewer") {
 		t.Fatalf("env var should contain agent content, got %q", env[0])
 	}
 }
@@ -127,7 +128,7 @@ func TestInjectAgentContext_EnvDefaultVar(t *testing.T) {
 	}
 	defer cleanup()
 
-	if len(env) != 1 || !containsString(env[0], "OWL_AGENT_PROMPT=") {
+	if len(env) != 1 || !strings.Contains(env[0], "OWL_AGENT_PROMPT=") {
 		t.Fatalf("should default to OWL_AGENT_PROMPT, got %v", env)
 	}
 }
@@ -163,7 +164,7 @@ func TestInjectAgentContext_File(t *testing.T) {
 	if err != nil {
 		t.Fatalf("injected file should exist: %v", err)
 	}
-	if !containsString(string(content), "# Reviewer") {
+	if !strings.Contains(string(content), "# Reviewer") {
 		t.Fatalf("file should contain agent content, got %q", string(content))
 	}
 
@@ -200,7 +201,7 @@ func TestInjectAgentContext_FileBackupRestore(t *testing.T) {
 
 	// File should now contain injected content
 	content, _ := os.ReadFile(filePath)
-	if containsString(string(content), originalContent) {
+	if strings.Contains(string(content), originalContent) {
 		t.Fatal("file should contain injected content, not original")
 	}
 
@@ -265,7 +266,7 @@ func TestInjectAgentContext_ClaudeCodeBuiltin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CLAUDE.md should be created: %v", err)
 	}
-	if !containsString(string(content), "# Reviewer") {
+	if !strings.Contains(string(content), "# Reviewer") {
 		t.Fatalf("CLAUDE.md should contain agent content, got %q", string(content))
 	}
 
@@ -273,17 +274,4 @@ func TestInjectAgentContext_ClaudeCodeBuiltin(t *testing.T) {
 	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
 		t.Fatal("cleanup should remove CLAUDE.md")
 	}
-}
-
-func containsString(s, sub string) bool {
-	return len(s) >= len(sub) && findStr(s, sub)
-}
-
-func findStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

@@ -92,7 +92,7 @@ func (s *CallbackServer) handleEndpoint(handler CallbackHandler) http.HandlerFun
 			return
 		}
 
-		body, err := io.ReadAll(r.Body)
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB cap
 		if err != nil {
 			http.Error(w, "Failed to read body", http.StatusBadRequest)
 			return

@@ -27,6 +27,10 @@ func (d *HarnessDefinition) CheckBinary() error {
 //
 // extraArgs are appended after the template-expanded args.
 func (d *HarnessDefinition) BuildCommand(description, workDir string, extraArgs []string) (string, []string, error) {
+	if d.Binary == "" {
+		return "", nil, fmt.Errorf("harness %q has no binary configured", d.Name)
+	}
+
 	var args []string
 	dirInjected := false
 

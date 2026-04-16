@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,6 +71,11 @@ func (r *Registry) LoadFromDir(dir string) error {
 		// Use filename (without ext) as name if YAML doesn't specify one
 		if def.Name == "" {
 			def.Name = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		}
+
+		if def.Binary == "" {
+			log.Printf("Warning: harness %q in %s has no binary configured, skipping", def.Name, path)
+			continue
 		}
 
 		r.register(&def)
