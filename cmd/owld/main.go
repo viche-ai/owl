@@ -19,12 +19,15 @@ import (
 	"github.com/viche-ai/owl/internal/ipc"
 	"github.com/viche-ai/owl/internal/llm"
 	"github.com/viche-ai/owl/internal/metrics"
+	"github.com/viche-ai/owl/internal/shellpath"
 )
 
 const SocketPath = "/tmp/owld.sock"
 
 func main() {
 	_ = os.Remove(SocketPath)
+
+	shellpath.Hydrate()
 
 	cfg, err := config.Load()
 	if err != nil {
