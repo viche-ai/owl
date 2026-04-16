@@ -251,10 +251,12 @@ var recommendCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		cwd, _ := os.Getwd()
 		var sendReply ipc.SendMessageReply
 		if err := client.Call("Daemon.SendMessage", &ipc.SendMessageArgs{
 			AgentIndex: metaIdx,
 			Content:    prompt,
+			WorkDir:    cwd,
 		}, &sendReply); err != nil {
 			fmt.Fprintf(os.Stderr, "Error sending message to meta-agent: %v\n", err)
 			os.Exit(1)

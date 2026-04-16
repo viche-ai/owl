@@ -480,9 +480,19 @@ func (e *AgentEngine) runMetaAgent(args *ipc.HatchArgs, inbox chan ipc.InboundMe
 	e.appendLog("> Ready. Waiting for messages...\n")
 	e.setState("idle")
 
+	currentWorkDir := workDir
 	for msg := range inbox {
+		content := msg.Content
+		if msg.WorkDir != "" && msg.WorkDir != currentWorkDir {
+			currentWorkDir = msg.WorkDir
+			e.systemTools.WorkDir = currentWorkDir
+			e.metaTools.WorkDir = currentWorkDir
+			prelude := "[WORKSPACE UPDATE]\n" + metaAgentWorkContext(currentWorkDir) + "\n[END WORKSPACE UPDATE]\n\n"
+			content = prelude + content
+			e.appendLog(fmt.Sprintf("> Workspace updated: %s\n", currentWorkDir))
+		}
 		e.appendLog(fmt.Sprintf("\n> [%s] %s\n", msg.From, msg.Content))
-		e.processMessage(msg.Content)
+		e.processMessage(content)
 	}
 
 	e.appendLog("\n> Meta-agent stopped.\n")

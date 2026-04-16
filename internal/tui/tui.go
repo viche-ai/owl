@@ -63,8 +63,9 @@ func sendUserMessage(agentIndex int, content string) {
 		return
 	}
 	defer func() { _ = c.Close() }()
+	workDir, _ := os.Getwd()
 	var reply ipc.SendMessageReply
-	_ = c.Call("Daemon.SendMessage", &ipc.SendMessageArgs{AgentIndex: agentIndex, Content: content}, &reply)
+	_ = c.Call("Daemon.SendMessage", &ipc.SendMessageArgs{AgentIndex: agentIndex, Content: content, WorkDir: workDir}, &reply)
 }
 
 func sendHatch(desc string) (string, error) {

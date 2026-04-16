@@ -52,6 +52,7 @@ type Service struct {
 type InboundMessage struct {
 	From    string // "user" or a viche agent ID
 	Content string
+	WorkDir string // caller's working directory at send time; empty if unknown
 }
 
 func NewService() *Service {
@@ -413,6 +414,7 @@ func (s *Service) CloneAgent(req *CloneRequest, res *CloneResponse) error {
 type SendMessageArgs struct {
 	AgentIndex int
 	Content    string
+	WorkDir    string // caller's cwd; used by the meta-agent to resolve project-scoped paths
 }
 
 type SendMessageReply struct {
@@ -428,7 +430,7 @@ func (s *Service) SendMessage(args *SendMessageArgs, reply *SendMessageReply) er
 		return fmt.Errorf("no inbox for agent index %d", args.AgentIndex)
 	}
 
-	ch <- InboundMessage{From: "user", Content: args.Content}
+	ch <- InboundMessage{From: "user", Content: args.Content, WorkDir: args.WorkDir}
 	reply.Success = true
 	return nil
 }
