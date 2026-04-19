@@ -1,4 +1,4 @@
-.PHONY: all build clean test lint run-owl run-owld install-hooks dist distclean
+.PHONY: all build clean fmt fmt-check test lint run-owl run-owld install-hooks dist distclean
 
 # Build parameters
 BIN_DIR := bin
@@ -31,6 +31,21 @@ run-owl: build
 # Run the daemon
 run-owld: build
 	@./$(OWLD_BIN)
+
+# Run gofmt in-place
+fmt:
+	@echo "Formatting Go files..."
+	@gofmt -w $(GO_FILES)
+
+# Verify Go formatting
+fmt-check:
+	@echo "Checking Go formatting..."
+	@UNFORMATTED="$$(gofmt -l $(GO_FILES))"; \
+	if [ -n "$$UNFORMATTED" ]; then \
+		echo "The following files need gofmt:"; \
+		echo "$$UNFORMATTED"; \
+		exit 1; \
+	fi
 
 # Test the project
 test:

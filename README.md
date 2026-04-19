@@ -62,9 +62,11 @@ Installs `owl` and `owld` to `~/.local/bin` and sets up the daemon as a backgrou
 git clone https://github.com/viche-ai/owl.git
 cd owl
 make build
+make install-hooks
 ```
 
 Produces `bin/owl` and `bin/owld`.
+The optional `make install-hooks` step enables the version-controlled pre-commit hook for local quality checks.
 
 ---
 
