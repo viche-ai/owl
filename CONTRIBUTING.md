@@ -23,9 +23,11 @@ By participating in this project, you are expected to uphold our standards of op
 1. Fork the repo and create your branch from `main`.
 2. If you've added code that should be tested, add tests.
 3. If you've changed APIs or behavior, update the documentation.
-4. Ensure the test suite passes (`make test`).
-5. Ensure the code passes the linter (`make lint`).
-6. Issue that pull request!
+4. Install the version-controlled pre-commit hook: `make install-hooks`.
+5. Ensure the test suite passes (`make test`).
+6. Ensure the code passes formatting checks (`make fmt-check`).
+7. Ensure the binaries build (`make build`).
+8. Issue that pull request!
 
 ## Local Development
 

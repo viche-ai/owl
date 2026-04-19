@@ -147,7 +147,10 @@ func (s *Service) DryRunHatch(args *HatchArgs, reply *DryRunReply) error {
 
 	// Resolution order: project > global > legacy templates
 	home, _ := os.UserHomeDir()
-	cwd, _ := os.Getwd()
+	workDir := args.WorkDir
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
 
 	type candidate struct {
 		scope string
@@ -157,7 +160,7 @@ func (s *Service) DryRunHatch(args *HatchArgs, reply *DryRunReply) error {
 	var candidates []candidate
 
 	if args.Scope == "" || args.Scope == "project" {
-		candidates = append(candidates, candidate{"project", filepath.Join(cwd, ".owl", "agents", agentName)})
+		candidates = append(candidates, candidate{"project", filepath.Join(workDir, ".owl", "agents", agentName)})
 	}
 	if args.Scope == "" || args.Scope == "global" {
 		candidates = append(candidates, candidate{"global", filepath.Join(home, ".owl", "agents", agentName)})

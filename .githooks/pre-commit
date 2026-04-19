@@ -1,32 +1,34 @@
 #!/bin/sh
-# Pre-commit hook: runs bd preflight checks before every commit.
-#
-# This hook is version-controlled in .githooks/ and auto-configured
-# via: git config core.hooksPath .githooks
+# Version-controlled pre-commit hook for Owl.
+# Activate locally with: make install-hooks
 
-set -e
+set -eu
 
-echo "------------------------------------------------------------"
-echo "  Pre-commit: running bd preflight checks"
-echo "  (format, lint, tests)"
-echo "------------------------------------------------------------"
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
 
-if ! command -v bd >/dev/null 2>&1; then
-  echo "Warning: bd command not found. Please install beads (https://github.com/steveyegge/beads) to run pre-commit checks." >&2
-  exit 1
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$STAGED_FILES" ]; then
+  echo "No staged files. Skipping pre-commit checks."
+  exit 0
 fi
 
-# We run bd preflight check. It handles testing, linting, and formatting.
-if ! bd preflight --check; then
-  echo ""
-  echo "------------------------------------------------------------"
-  echo "  BLOCKED: pre-commit validation failed."
-  echo "  Fix the issues above, then try committing again."
-  echo "------------------------------------------------------------"
-  exit 1
+GO_STAGED=$(printf '%s\n' "$STAGED_FILES" | grep '\.go$' || true)
+RELEVANT_CHANGES=$(printf '%s\n' "$STAGED_FILES" | grep -E '(^|/)\.github/workflows/.*\.ya?ml$|\.go$|^go\.(mod|sum)$|^Makefile$' || true)
+
+if [ -n "$GO_STAGED" ]; then
+  echo "Formatting staged Go files..."
+  printf '%s\n' "$GO_STAGED" | xargs gofmt -w
+  printf '%s\n' "$GO_STAGED" | xargs git add
 fi
 
-echo ""
-echo "------------------------------------------------------------"
-echo "  Pre-commit validation passed. Proceeding with commit."
-echo "------------------------------------------------------------"
+if [ -z "$RELEVANT_CHANGES" ]; then
+  echo "No Go/build/CI changes staged. Skipping Owl quality checks."
+  exit 0
+fi
+
+echo "Running Owl pre-commit checks..."
+make test
+make build
+
+echo "Pre-commit checks passed."
