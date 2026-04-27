@@ -5,7 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/viche-ai/owl/internal/logs"
+	"github.com/viche-ai/owl/internal/metrics"
 )
+
+const owlDirName = "." + "owl"
 
 func TestMetaToolsListAgents_Empty(t *testing.T) {
 	dir := t.TempDir()
@@ -98,6 +104,48 @@ func TestMetaToolsCreateAgentGlobalScope(t *testing.T) {
 	}
 }
 
+func TestMetaToolsListAgentsWithDefs(t *testing.T) {
+	homeDir := t.TempDir()
+	workDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	projectAgentDir := filepath.Join(workDir, owlDirName, "agents", "project-agent")
+	if err := os.MkdirAll(projectAgentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectAgentDir, "AGENTS.md"), []byte("Project agent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectAgentDir, "agent.yaml"), []byte("name: project-agent\nversion: 1.2.3\ndescription: Project scoped\ncapabilities:\n  - project-cap\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	globalAgentDir := filepath.Join(homeDir, owlDirName, "agents", "global-agent")
+	if err := os.MkdirAll(globalAgentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalAgentDir, "AGENTS.md"), []byte("Global agent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalAgentDir, "agent.yaml"), []byte("name: global-agent\nversion: 2.0.0\ndescription: Global scoped\ncapabilities:\n  - global-cap\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mt := &MetaTools{WorkDir: workDir}
+	result := mt.Execute(ToolCall{Name: "list_agents", Args: map[string]interface{}{}})
+
+	for _, want := range []string{
+		"[project] project-agent",
+		"(project-cap)",
+		"[global] global-agent",
+		"(global-cap)",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("list_agents missing %q:\n%s", want, result)
+		}
+	}
+}
+
 func TestMetaToolsValidateAgent(t *testing.T) {
 	dir := t.TempDir()
 	owlDir := filepath.Join(dir, ".owl", "agents", "my-agent")
@@ -155,6 +203,19 @@ func TestMetaToolsValidateAgentCatchesGuardrailMismatch(t *testing.T) {
 	})
 	if !strings.Contains(result, "must not be empty") {
 		t.Errorf("expected AGENTS.md error, got: %q", result)
+	}
+}
+
+func TestMetaToolsValidateAgentMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	mt := &MetaTools{WorkDir: dir}
+
+	result := mt.Execute(ToolCall{
+		Name: "validate_agent",
+		Args: map[string]interface{}{"name": "missing-agent", "scope": "project"},
+	})
+	if !strings.Contains(result, `Error: agent "missing-agent" not found`) {
+		t.Fatalf("expected missing agent error, got: %q", result)
 	}
 }
 
@@ -245,6 +306,104 @@ func TestMetaToolsApplyEditRequiresConfirmation(t *testing.T) {
 	changelog, _ := os.ReadFile(filepath.Join(owlDir, "CHANGELOG.md"))
 	if !strings.Contains(string(changelog), "Improved agent instructions") {
 		t.Errorf("expected CHANGELOG entry, got: %q", string(changelog))
+	}
+}
+
+func TestMetaToolsQueryLogsFilterByAgent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	logDir := filepath.Join(home, owlDirName, "logs")
+	writerA, _, err := logs.NewWriter(logDir, "run-a", "agent-a", "a1", "fake/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writerA.Log("info", "agent-a line")
+	if err := writerA.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	writerB, _, err := logs.NewWriter(logDir, "run-b", "agent-b", "b1", "fake/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writerB.Log("info", "agent-b line")
+	if err := writerB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	mt := &MetaTools{WorkDir: t.TempDir()}
+	result := mt.Execute(ToolCall{
+		Name: "query_logs",
+		Args: map[string]interface{}{
+			"agent_name": "agent-a",
+			"limit":      float64(10),
+		},
+	})
+
+	if !strings.Contains(result, "[agent-a]") {
+		t.Fatalf("expected agent-a log entry, got: %q", result)
+	}
+	if strings.Contains(result, "agent-b line") {
+		t.Fatalf("expected agent-b entry to be filtered out, got: %q", result)
+	}
+}
+
+func TestMetaToolsQueryMetricsNoRuns(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	mt := &MetaTools{WorkDir: t.TempDir()}
+	result := mt.Execute(ToolCall{
+		Name: "query_metrics",
+		Args: map[string]interface{}{
+			"agent_name": "missing-agent",
+		},
+	})
+
+	if result != "No metrics found for agent missing-agent" {
+		t.Fatalf("unexpected query_metrics result: %q", result)
+	}
+}
+
+func TestMetaToolsQueryMetricsWithRuns(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := metrics.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &metrics.RunMetrics{
+		RunID:         "run-123",
+		AgentName:     "builder",
+		Model:         "fake/model",
+		Status:        "completed",
+		StartTS:       time.Unix(1_700_000_000, 0).UTC(),
+		TokenInput:    10,
+		TokenOutput:   5,
+		ToolCallCount: 2,
+	}
+	if err := store.Save(run); err != nil {
+		t.Fatal(err)
+	}
+
+	mt := &MetaTools{WorkDir: t.TempDir()}
+	result := mt.Execute(ToolCall{
+		Name: "query_metrics",
+		Args: map[string]interface{}{
+			"agent_name": "builder",
+		},
+	})
+
+	for _, want := range []string{
+		"Metrics (1 runs):",
+		"run-123",
+		"fake/model",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("query_metrics missing %q:\n%s", want, result)
+		}
 	}
 }
 

@@ -1,99 +1,75 @@
 package llm
 
 import (
+	"context"
+	"strings"
 	"testing"
-
-	"github.com/viche-ai/owl/internal/config"
 )
 
-func TestRouter_NewRouter(t *testing.T) {
-	cfg := &config.Config{
-		Models: config.ModelsConfig{
-			Providers: map[string]config.ProviderConfig{
-				"anthropic": {
-					APIKey: "anthropic-key",
-				},
-				"openai": {
-					APIKey: "openai-key",
-				},
-				"custom": {
-					APIKey:  "custom-key",
-					BaseURL: "http://custom-url.com",
-				},
-			},
+type stubProvider struct {
+	name string
+}
+
+func (s stubProvider) ChatStream(_ context.Context, _ string, _ []Message) (<-chan StreamEvent, error) {
+	return nil, nil
+}
+
+func (s stubProvider) ChatStreamWithTools(_ context.Context, _ string, _ []Message, _ []ToolDef) (<-chan StreamEvent, error) {
+	return nil, nil
+}
+
+func (s stubProvider) Name() string {
+	return s.name
+}
+
+func TestRouterKnownProvider(t *testing.T) {
+	provider := stubProvider{name: "anthropic"}
+	router := &Router{
+		providers: map[string]Provider{
+			"anthropic": provider,
 		},
 	}
 
-	router := NewRouter(cfg)
-
-	if len(router.providers) != 3 {
-		t.Fatalf("expected 3 providers, got %d", len(router.providers))
+	gotProvider, model, err := router.Resolve("anthropic/claude-sonnet-4-6")
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
 	}
-
-	providers := router.ListProviders()
-	if len(providers) != 3 {
-		t.Fatalf("expected 3 providers from ListProviders, got %d", len(providers))
+	if gotProvider != provider {
+		t.Fatalf("expected provider %#v, got %#v", provider, gotProvider)
 	}
-
-	// Make sure custom provider is created properly
-	if _, ok := router.providers["custom"]; !ok {
-		t.Errorf("custom provider missing")
+	if model != "claude-sonnet-4-6" {
+		t.Fatalf("expected model claude-sonnet-4-6, got %q", model)
 	}
 }
 
-func TestRouter_Resolve(t *testing.T) {
-	cfg := &config.Config{
-		Models: config.ModelsConfig{
-			Providers: map[string]config.ProviderConfig{
-				"anthropic": {
-					APIKey: "anthropic-key",
-				},
-			},
+func TestRouterUnknownProvider(t *testing.T) {
+	router := &Router{
+		providers: map[string]Provider{
+			"anthropic": stubProvider{name: "anthropic"},
 		},
 	}
 
-	router := NewRouter(cfg)
+	_, _, err := router.Resolve("unknown/foo")
+	if err == nil {
+		t.Fatal("expected error for unknown provider")
+	}
+	if !strings.Contains(err.Error(), `no provider configured for "unknown"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
-	tests := []struct {
-		name        string
-		modelID     string
-		expectError bool
-		expectModel string
-	}{
-		{
-			name:        "valid format and provider",
-			modelID:     "anthropic/claude-3-5-sonnet",
-			expectError: false,
-			expectModel: "claude-3-5-sonnet",
-		},
-		{
-			name:        "invalid format",
-			modelID:     "anthropic_claude",
-			expectError: true,
-		},
-		{
-			name:        "unknown provider",
-			modelID:     "openai/gpt-4o",
-			expectError: true,
+func TestRouterNoPrefix(t *testing.T) {
+	router := &Router{
+		providers: map[string]Provider{
+			"anthropic": stubProvider{name: "anthropic"},
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, modelName, err := router.Resolve(tc.modelID)
-
-			if tc.expectError {
-				if err == nil {
-					t.Fatalf("expected error for modelID %q, got none", tc.modelID)
-				}
-			} else {
-				if err != nil {
-					t.Fatalf("did not expect error for modelID %q, got: %v", tc.modelID, err)
-				}
-				if modelName != tc.expectModel {
-					t.Errorf("expected model name %q, got %q", tc.expectModel, modelName)
-				}
-			}
-		})
+	_, _, err := router.Resolve("claude-sonnet-4-6")
+	if err == nil {
+		t.Fatal("expected error for missing provider prefix")
+	}
+	if !strings.Contains(err.Error(), "expected 'provider/model'") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

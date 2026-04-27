@@ -17,39 +17,48 @@ import (
 	"github.com/viche-ai/owl/internal/llm"
 	"github.com/viche-ai/owl/internal/logs"
 	"github.com/viche-ai/owl/internal/metrics"
-	"github.com/viche-ai/owl/internal/runs"
 	"github.com/viche-ai/owl/internal/tools"
 	"github.com/viche-ai/owl/internal/viche"
 )
 
 type AgentEngine struct {
-	State           *ipc.AgentState
-	Cfg             *config.Config
-	Mu              func(func())
-	Router          *llm.Router
-	RunStore        *runs.Store       // optional; persists state transitions to disk
-	MetricStore     *metrics.Store    // optional; persists run metrics to disk
-	HarnessRegistry *harness.Registry // optional; resolves harness definitions
+	State              *ipc.AgentState
+	Cfg                *config.Config
+	Mu                 func(func())
+	Router             ModelResolver
+	RunStore           RunStore          // optional; persists state transitions to disk
+	MetricStore        MetricsStore      // optional; persists run metrics to disk
+	HarnessRegistry    *harness.Registry // optional; resolves harness definitions
+	Clock              Clock
+	Sleep              SleepFunc
+	HomeDir            HomeDirFunc
+	Getwd              GetwdFunc
+	NewLogWriter       LogWriterFactory
+	NewMetricsRecorder MetricsFactory
+	NewVicheClient     VicheClientFactory
+	NewVicheChannel    VicheChannelFactory
+	NewTaskLedger      TaskLedgerFactory
 
-	logWriter   *logs.Writer
-	collector   *metrics.Collector
+	logWriter   LogWriter
+	collector   MetricsRecorder
 	runCtx      context.Context // cancellable context for the current run
 	messages    []llm.Message
-	provider    llm.Provider
+	provider    LLMProvider
 	model       string
 	vicheTools  *tools.VicheTools
 	systemTools *tools.SystemTools
 	taskTools   *tools.TaskTools
 	metaTools   *tools.MetaTools
-	taskLedger  *TaskLedger
+	taskLedger  TaskLedgerStore
 	toolDefs    []llm.ToolDef
 }
 
 func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan ipc.InboundMessage) {
+	e.initDeps()
 	e.runCtx = ctx
 
 	// Open structured log file
-	home, _ := os.UserHomeDir()
+	home, _ := e.HomeDir()
 	logDir := filepath.Join(home, ".owl", "logs")
 
 	runID := e.State.RunID
@@ -58,7 +67,7 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 	}
 
 	var logPath string
-	if w, path, err := logs.NewWriter(logDir, runID, e.State.Name, e.State.ID, args.ModelID); err == nil {
+	if w, path, err := e.NewLogWriter(logDir, runID, e.State.Name, e.State.ID, args.ModelID); err == nil {
 		e.logWriter = w
 		logPath = path
 		defer func() { _ = e.logWriter.Close() }()
@@ -80,18 +89,18 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 	}
 	workspaceForMetrics := args.WorkDir
 	if workspaceForMetrics == "" {
-		workspaceForMetrics, _ = os.Getwd()
+		workspaceForMetrics, _ = e.Getwd()
 	}
-	e.collector = metrics.NewCollector(runID, e.State.Name, args.ModelID, adapterName, workspaceForMetrics)
+	e.collector = e.NewMetricsRecorder(runID, e.State.Name, args.ModelID, adapterName, workspaceForMetrics)
 
 	e.appendLog("> Booting agent engine...\n")
 	e.appendLog(fmt.Sprintf("> Log: %s\n", logPath))
-	time.Sleep(200 * time.Millisecond)
+	_ = e.Sleep(ctx, 200*time.Millisecond)
 
 	// Resolve working directory early — needed for both harness and native paths.
 	workDir := args.WorkDir
 	if workDir == "" {
-		workDir, _ = os.Getwd()
+		workDir, _ = e.Getwd()
 	}
 
 	// Resolve agent definition early so harness mode can use it for context injection.
@@ -141,6 +150,12 @@ func (e *AgentEngine) Run(ctx context.Context, args *ipc.HatchArgs, inbox chan i
 
 	if modelID == "" {
 		e.appendLog("[Error] No AI providers configured.\n")
+		e.setState("idle")
+		return
+	}
+
+	if e.Router == nil {
+		e.appendLog("[Error] No model resolver configured.\n")
 		e.setState("idle")
 		return
 	}
@@ -299,7 +314,7 @@ Output ONLY valid JSON.`, args.Description)
 		vicheToken = args.Registry
 	}
 
-	vc := viche.NewClient(vicheURL, vicheToken)
+	vc := e.NewVicheClient(vicheURL, vicheToken)
 
 	if vc.IsAuthenticated() {
 		e.appendLog(fmt.Sprintf("> Registry: %s\n", vc.RegistryLabel()))
@@ -318,9 +333,9 @@ Output ONLY valid JSON.`, args.Description)
 		})
 		e.appendLog(fmt.Sprintf("> Viche ID: %s\n", agentID))
 
-		ch := viche.NewChannel(vc.BaseURL(), agentID, vc.Token())
+		ch := e.NewVicheChannel(vc.BaseURL(), agentID, vc.Token())
 
-		ch.OnMessage = func(msg viche.InboxMessage) {
+		ch.SetOnMessage(func(msg viche.InboxMessage) {
 			if msg.Type == "result" {
 				e.appendLog(fmt.Sprintf("\n> [Viche result from %s] %s\n", msg.From, msg.Body))
 				return
@@ -329,7 +344,7 @@ Output ONLY valid JSON.`, args.Description)
 				From:    msg.From,
 				Content: fmt.Sprintf("[Message from agent %s]: %s", msg.From, msg.Body),
 			}
-		}
+		})
 
 		if err := ch.Connect(); err != nil {
 			e.appendLog(fmt.Sprintf("[Warning] WebSocket failed: %v\n", err))
@@ -361,7 +376,7 @@ Output ONLY valid JSON.`, args.Description)
 	e.appendLog(fmt.Sprintf("> %d system tools available: shell_exec, file_read, file_write, file_edit\n", len(e.systemTools.Definitions())))
 
 	// ── Step 3c: Task ledger + tools ──
-	e.taskLedger = NewTaskLedger(fmt.Sprintf("%s-%d", sanitizeName(args.Description), time.Now().Unix()))
+	e.taskLedger = e.NewTaskLedger(fmt.Sprintf("%s-%d", sanitizeName(args.Description), e.Clock().Unix()))
 	e.taskTools = &tools.TaskTools{Updater: e}
 	for _, def := range e.taskTools.Definitions() {
 		e.toolDefs = append(e.toolDefs, llm.ToolDef{
@@ -566,7 +581,7 @@ func (e *AgentEngine) runWithTools() string {
 		// Ensure we are using the dynamically set model ID from state, if any.
 		var currentModelID string
 		e.Mu(func() { currentModelID = e.State.ModelID })
-		if currentModelID != "" {
+		if currentModelID != "" && e.Router != nil {
 			if provider, model, errResolve := e.Router.Resolve(currentModelID); errResolve == nil {
 				e.provider = provider
 				e.model = model

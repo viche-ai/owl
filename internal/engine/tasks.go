@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,13 +33,18 @@ type Task struct {
 
 type TaskLedger struct {
 	filePath string
+	mu       sync.RWMutex
 	tasks    []Task
 	nextID   int
 }
 
 func NewTaskLedger(agentID string) *TaskLedger {
 	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".owl", "agents", agentID)
+	return NewTaskLedgerAt(filepath.Join(home, ".owl", "agents"), agentID)
+}
+
+func NewTaskLedgerAt(baseDir, agentID string) *TaskLedger {
+	dir := filepath.Join(baseDir, agentID)
 	_ = os.MkdirAll(dir, 0755)
 
 	tl := &TaskLedger{
@@ -53,6 +59,9 @@ func NewTaskLedger(agentID string) *TaskLedger {
 }
 
 func (tl *TaskLedger) load() {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
 	data, err := os.ReadFile(tl.filePath)
 	if err != nil {
 		return
@@ -69,7 +78,7 @@ func (tl *TaskLedger) load() {
 	}
 }
 
-func (tl *TaskLedger) save() error {
+func (tl *TaskLedger) saveLocked() error {
 	var lines []string
 	for _, t := range tl.tasks {
 		b, _ := json.Marshal(t)
@@ -79,6 +88,9 @@ func (tl *TaskLedger) save() error {
 }
 
 func (tl *TaskLedger) AddTask(summary, source string) *Task {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
 	t := Task{
 		ID:      fmt.Sprintf("t%d", tl.nextID),
 		Status:  TaskPending,
@@ -88,11 +100,14 @@ func (tl *TaskLedger) AddTask(summary, source string) *Task {
 	}
 	tl.nextID++
 	tl.tasks = append(tl.tasks, t)
-	_ = tl.save()
+	_ = tl.saveLocked()
 	return &t
 }
 
 func (tl *TaskLedger) UpdateTask(id string, status TaskStatus) {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
 	for i := range tl.tasks {
 		if tl.tasks[i].ID == id {
 			tl.tasks[i].Status = status
@@ -100,7 +115,7 @@ func (tl *TaskLedger) UpdateTask(id string, status TaskStatus) {
 			if status == TaskCompleted {
 				tl.tasks[i].Completed = time.Now().UTC().Format(time.RFC3339)
 			}
-			_ = tl.save()
+			_ = tl.saveLocked()
 			return
 		}
 	}
@@ -108,11 +123,28 @@ func (tl *TaskLedger) UpdateTask(id string, status TaskStatus) {
 
 // ContextSummary returns a compact summary of all tasks for injection into the LLM context
 func (tl *TaskLedger) ContextSummary() string {
+	tl.mu.RLock()
+	defer tl.mu.RUnlock()
+
 	if len(tl.tasks) == 0 {
 		return "No tasks recorded yet."
 	}
 
+	counts := map[TaskStatus]int{}
+	for _, t := range tl.tasks {
+		counts[t.Status]++
+	}
+
 	var lines []string
+	lines = append(lines, fmt.Sprintf(
+		"Status counts: pending=%d started=%d completed=%d stalled=%d cancelled=%d wont_do=%d",
+		counts[TaskPending],
+		counts[TaskStarted],
+		counts[TaskCompleted],
+		counts[TaskStalled],
+		counts[TaskCancelled],
+		counts[TaskWontDo],
+	))
 	for _, t := range tl.tasks {
 		lines = append(lines, fmt.Sprintf("- [%s] %s (id: %s, from: %s)", t.Status, t.Summary, t.ID, t.Source))
 	}
@@ -121,6 +153,9 @@ func (tl *TaskLedger) ContextSummary() string {
 
 // FindSimilar checks if a task with similar content already exists
 func (tl *TaskLedger) FindSimilar(summary string) *Task {
+	tl.mu.RLock()
+	defer tl.mu.RUnlock()
+
 	// Simple substring match — the LLM will do the real dedup reasoning
 	lower := strings.ToLower(summary)
 	for i := range tl.tasks {

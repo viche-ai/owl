@@ -3,13 +3,16 @@ package tools
 import (
 	"fmt"
 	"strings"
-
-	"github.com/viche-ai/owl/internal/viche"
 )
+
+type VicheChannel interface {
+	Push(event string, payload map[string]interface{}) (map[string]interface{}, error)
+	Close()
+}
 
 // VicheTools provides discover and send tools backed by a live Viche channel
 type VicheTools struct {
-	Channel *viche.Channel
+	Channel VicheChannel
 	AgentID string
 }
 

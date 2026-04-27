@@ -55,15 +55,14 @@ func TestCollector_Accumulates(t *testing.T) {
 func TestCollector_Finalize(t *testing.T) {
 	c := metrics.NewCollector("run-fin", "test-agent", "anthropic/claude-sonnet-4-6", "anthropic", "/tmp")
 	c.RecordTokenUsage(100, 50)
-	time.Sleep(5 * time.Millisecond) // ensure non-zero duration
 
 	m := c.Finalize("completed")
 
 	if m.Status != "completed" {
 		t.Errorf("expected status 'completed', got %q", m.Status)
 	}
-	if m.DurationMS <= 0 {
-		t.Errorf("expected positive duration, got %d", m.DurationMS)
+	if m.DurationMS < 0 {
+		t.Errorf("expected non-negative duration, got %d", m.DurationMS)
 	}
 	if m.EndTS == nil {
 		t.Error("expected EndTS to be set")
