@@ -40,6 +40,10 @@ type Channel struct {
 	OnMessage func(msg InboxMessage)
 }
 
+func (c *Channel) SetOnMessage(fn func(InboxMessage)) {
+	c.OnMessage = fn
+}
+
 func NewChannel(baseURL, agentID, token string) *Channel {
 	return &Channel{
 		agentID: agentID,

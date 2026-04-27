@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt fmt-check test lint run-owl run-owld install-hooks dist distclean
+.PHONY: all build clean fmt fmt-check test test-hygiene check lint run-owl run-owld install-hooks dist distclean
 
 # Build parameters
 BIN_DIR := bin
@@ -50,12 +50,19 @@ fmt-check:
 # Test the project
 test:
 	@echo "Running tests..."
-	@go test -v -race ./...
+	@go test -v -race -count=1 ./...
+
+test-hygiene:
+	@echo "Checking test hygiene..."
+	@bash scripts/check-test-hygiene.sh
+
+check: test-hygiene test
 
 # Lint the project
 lint:
 	@echo "Running linter..."
-	@golangci-lint run
+	@mkdir -p .cache/go-build .cache/golangci-lint
+	@GOCACHE=$(CURDIR)/.cache/go-build GOLANGCI_LINT_CACHE=$(CURDIR)/.cache/golangci-lint golangci-lint run
 
 # Install git hooks
 install-hooks:
@@ -68,6 +75,7 @@ install-hooks:
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BIN_DIR)
+	@rm -rf .cache
 	@go clean
 
 # Build release distribution tarballs for current platform

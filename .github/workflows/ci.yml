@@ -24,7 +24,7 @@ jobs:
         run: make fmt-check
 
       - name: Run test suite
-        run: make test
+        run: make check
 
       - name: Build binaries
         run: make build

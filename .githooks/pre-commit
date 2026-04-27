@@ -28,7 +28,7 @@ if [ -z "$RELEVANT_CHANGES" ]; then
 fi
 
 echo "Running Owl pre-commit checks..."
-make test
+make check
 make build
 
 echo "Pre-commit checks passed."

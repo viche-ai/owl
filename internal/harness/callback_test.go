@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestCallbackServer_StartStop(t *testing.T) {
@@ -31,8 +30,6 @@ func TestCallbackServer_StartStop(t *testing.T) {
 
 	srv.Stop()
 
-	// After stop, the port should no longer accept connections (give it a moment)
-	time.Sleep(50 * time.Millisecond)
 	_, err = http.Post(fmt.Sprintf("http://127.0.0.1:%d/status", port), "application/json", bytes.NewReader([]byte(`{}`)))
 	if err == nil {
 		t.Fatal("expected connection refused after Stop")

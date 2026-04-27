@@ -212,8 +212,10 @@ func TestUnknownTool(t *testing.T) {
 }
 
 func TestResolveTildePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	st := &SystemTools{WorkDir: "/tmp"}
-	home, _ := os.UserHomeDir()
 
 	resolved := st.resolvePath("~/test.txt")
 	expected := filepath.Join(home, "test.txt")

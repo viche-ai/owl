@@ -2,9 +2,11 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -193,6 +195,78 @@ func TestAllStatuses(t *testing.T) {
 		tl.UpdateTask("t1", s)
 		if tl.tasks[0].Status != s {
 			t.Errorf("expected %s, got %s", s, tl.tasks[0].Status)
+		}
+	}
+}
+
+func TestTaskLedgerConcurrent(t *testing.T) {
+	tl, _ := setupTestLedger(t)
+
+	const taskCount = 16
+
+	var addWG sync.WaitGroup
+	for i := 0; i < taskCount; i++ {
+		addWG.Add(1)
+		go func(i int) {
+			defer addWG.Done()
+			tl.AddTask(fmt.Sprintf("task-%02d", i), "user")
+		}(i)
+	}
+	addWG.Wait()
+
+	if got := len(tl.tasks); got != taskCount {
+		t.Fatalf("expected %d tasks after concurrent adds, got %d", taskCount, got)
+	}
+
+	var updateWG sync.WaitGroup
+	for i := 1; i <= taskCount; i++ {
+		updateWG.Add(1)
+		go func(id int) {
+			defer updateWG.Done()
+			tl.UpdateTask(fmt.Sprintf("t%d", id), TaskCompleted)
+		}(i)
+	}
+	updateWG.Wait()
+
+	for _, task := range tl.tasks {
+		if task.Status != TaskCompleted {
+			t.Fatalf("task %s not completed: %s", task.ID, task.Status)
+		}
+		if task.Completed == "" {
+			t.Fatalf("task %s missing completed timestamp", task.ID)
+		}
+	}
+}
+
+func TestContextSummaryStatusCounts(t *testing.T) {
+	tl, _ := setupTestLedger(t)
+
+	tl.AddTask("pending task", "user")
+	tl.AddTask("started task", "user")
+	tl.AddTask("completed task", "user")
+	tl.AddTask("stalled task", "user")
+	tl.AddTask("cancelled task", "user")
+	tl.AddTask("wont do task", "user")
+
+	tl.UpdateTask("t2", TaskStarted)
+	tl.UpdateTask("t3", TaskCompleted)
+	tl.UpdateTask("t4", TaskStalled)
+	tl.UpdateTask("t5", TaskCancelled)
+	tl.UpdateTask("t6", TaskWontDo)
+
+	summary := tl.ContextSummary()
+
+	for _, want := range []string{
+		"Status counts: pending=1 started=1 completed=1 stalled=1 cancelled=1 wont_do=1",
+		"- [pending] pending task",
+		"- [started] started task",
+		"- [completed] completed task",
+		"- [stalled] stalled task",
+		"- [cancelled] cancelled task",
+		"- [wont_do] wont do task",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary missing %q:\n%s", want, summary)
 		}
 	}
 }
